@@ -130,5 +130,5 @@ session:
 gpm:
   releases: stable
   method: auto
-  verify_peer: true
+  verify_peer: false
   official_gpm_only: true
