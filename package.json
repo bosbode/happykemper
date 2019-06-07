@@ -1,6 +1,6 @@
 {
-  "name": "starter",
-  "version": "0.0.1",
+  "name": "happykemper",
+  "version": "1.0.0",
   "dependencies": {
     "@glidejs/glide": "^3.3.0",
     "ajv": "^6.10.0",
