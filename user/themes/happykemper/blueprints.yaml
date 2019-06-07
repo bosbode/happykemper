@@ -1,12 +1,12 @@
-name: Starter
+name: happykemper
 version: 0.0.1
-description: "Basic setup to start developing"
+description: "Happy Kemper web development website"
 icon: group
 author:
   name: Bosse Kemper
   email: bosse@happykemper.com
-  url: http://happykemper.com
-homepage: https://github.com/bosbode/starter
+  url: http://www.happykemper.com
+homepage: https://github.com/bosbode/happykemper
 keywords: 
 bugs: 
 license: MIT
