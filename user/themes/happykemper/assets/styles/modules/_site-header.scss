@@ -4,7 +4,7 @@
 	flex-direction: row-reverse;
 	z-index: 100;
 	position: fixed;
-	background-image: linear-gradient($color-background, $color-background, $color-background, $color-background, rgba($color-background, 0));
+	background-image: linear-gradient($color-background 75%, rgba($color-background, 0));
 	padding: 20px 8.33% 10px;
 	width: 100vw;
 
