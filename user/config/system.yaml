@@ -122,9 +122,10 @@ media:
   auto_metadata_exif: false
 session:
   enabled: true
+  initialize: false
   timeout: 1800
   name: grav-site
-  secure: false
+  secure: true
   httponly: true
   split: true
 gpm:

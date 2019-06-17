@@ -23,3 +23,5 @@ Zin om eens kennis te maken? Neem dan contact met me op via:
 
 Mail: [bosse@happykemper.com](mailto:bosse@happykemper.com)<br />
 Tel: [+31 6 396 712 97](tel:+31639671297)
+
+Happy Kemper is gevestigd in rotterdam.
