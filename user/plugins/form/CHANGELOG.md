@@ -1,5 +1,30 @@
+# v3.0.7
+## 07/01/2019
+
+1. [](#bugfix)
+    * Fixed file upload when `$grav['user']` is not set [#352](https://github.com/getgrav/grav-plugin-form/issues/352)
+    * Fixed label markdown being escaped [#356](https://github.com/getgrav/grav-plugin-form/pull/356)
+
+# v3.0.6
+## 06/24/2019
+
+1. [](#bugfix)
+    * Fixed regression breaking forms external to the page in some sites
+    * Fixed regression with form action in sub-path folders
+
+# v3.0.5
+## 06/21/2019
+
+1. [](#new)
+    * Added support for form state saving with dynamic unique id appended to the URL
+1. [](#improved)
+    * Avoid creating form state if there is no data to be saved
+1. [](#bugfix)
+    * Fixed missing check for maximum allowed files in `files` field
+    * Fixed unique form ids getting cached, they should change on every page reload
+
 # v3.0.4
-## 03/14/2019
+## 06/14/2019
 
 1. [](#improved)
     * Captcha field: fail silently and display error in console if site_key was not defined
