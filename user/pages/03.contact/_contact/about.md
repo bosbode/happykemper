@@ -5,7 +5,7 @@ title: Contact
 socials:
     -
         network: LinkedIn
-        url: 'https://nl.linkedin.com/in/bosse-kemper-04086935'
+        url: 'https://nl.linkedin.com/in/bosse-kemper'
         icon: linkedin-in
         title: LinkedIn
     -
