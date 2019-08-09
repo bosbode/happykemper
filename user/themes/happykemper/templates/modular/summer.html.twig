@@ -1,0 +1,9 @@
+<!-- {{ page.header.title }} Section -->
+    {% for svg in page.media.files %}
+        {{ getfilecontents(svg.filepath) }}
+    {% endfor %}
+<div class="summer__animation-container">
+    {% for img in page.media.images %}
+            <img src="{{ img.url }}" />
+    {% endfor %}
+</div>
