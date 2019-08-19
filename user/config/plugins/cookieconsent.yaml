@@ -1,0 +1,13 @@
+enabled: true
+cdn: false
+popup_background_color: '#312c22'
+popup_text_color: '#ffffff'
+button_background_color: '#aa8e9b'
+button_text_color: '#312c22'
+button_border_color: '#aa8e9b'
+position: bottom-right
+theme: block
+content_message: 'Deze website maakt gebruikt van cookies.'
+content_dismiss: 'Oké'
+content_link: ' '
+content_href: ''

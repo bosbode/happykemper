@@ -1,0 +1,12 @@
+enabled: true
+tracking_id: "UA-145839526-1"
+
+advertising_features: false
+anonymize_ip: true
+blocked_ips: []
+cookie_domain: ""
+cookie_expires: ~
+cookie_update: true
+do_not_track: true
+object_name: ""
+opt_out: false
