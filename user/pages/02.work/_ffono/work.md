@@ -8,7 +8,7 @@ alt: FFONO Landing page
 
 # FFONO
 
-In samenwerking met [FFONO](https://ffono.agency) en [All This and More](https://allthis.digital/), heeft Happy Kemper de volledige website ontwikkeld. Het ontwerp is verzorgd door All This and More. De website bestaat uit een modulaire enkele pagina met custom animaties.
+In samenwerking met [FFONO](https://ffono.agency) en [All This and More](https://allthis.digital/), heeft Happy Kemper de volledige website ontwikkeld. Het ontwerp is verzorgd door All This and More. De website bestaat uit een modulaire enkele pagina met custom (scroll) animaties.
 
 De website is 'mobile friendly' en tot stand gekomen met de volgende technieken:
 
