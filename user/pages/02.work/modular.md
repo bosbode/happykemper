@@ -9,6 +9,7 @@ content:
         by: default
         dir: asc
         custom:
+                - _ffono
                 - _walkinfish
                 - _wieisjohn
                 - _dept
