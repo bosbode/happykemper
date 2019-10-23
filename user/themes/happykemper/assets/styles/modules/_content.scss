@@ -85,16 +85,17 @@
 			position: relative;
 			padding-left: 0;
 			list-style-type: none;
+			flex-wrap: wrap;
 
 			& > li {
-				margin-right: 10px;
+				margin: 5px 5px 5px 0;
 				background: $color-primary;
 				color: white;
 				padding: 5px;
 				border-radius: 5px;
 
 				@include breakpoint(desktop) {
-					margin-right: 10px;
+					margin: 7px 7px 7px 0;
 				}
 			}
 
@@ -102,7 +103,7 @@
 				text-decoration: none;
 			}
 
-			& > li > abbr[title]:after {
+			& > li > abbr[title]::after {
 				content: "";
 			}
 			
@@ -114,16 +115,16 @@
 				background: $color-primary-hover;
 			}
 
-			& > li:hover > abbr[title]:after {
+			& > li:hover > abbr[title]::after {
 				position: absolute;
-				top: 40px;
+				bottom: -20px;
 				left: 0;
 				width: 100%;
 				color: $color-body-text;
 				content: "> " attr(title) "";
 			
 				@include breakpoint(desktop) { 
-					top: 55px;
+					bottom: -30px;
 			   }
 			}
 		}
