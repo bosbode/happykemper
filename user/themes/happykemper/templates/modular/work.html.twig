@@ -3,38 +3,36 @@
         <div class="content__bodytext content__bodytext--work">
             {{ page.content }}
         </div>
-        {# <div class={% if page.header.switchPosition %}"content__img-container content__img-container--switch-position"{% else %}"content__img-container"{% endif %}>
-            {% for img in page.media.images %}
-                <video class="content__video" poster="{{ img.url }}">
-                    {% for video in page.media.videos %}
-                        <source data-src="{{ video.url }}" type="video/mp4">
-                    {% endfor %}
-                    Your browser does not support the video tag.
-                </video>
-                <p class="btn__play btn__play--values">
-                    <i class="fas fa-play"></i>
-                </p>
-            {% endfor %}
-        </div> #}
         <div class="content__img-container">
             {% if page.media.images|length > 1 %}
-                <div class="glide" data-autoplay="{{ page.header.autoplay }}">
+                <div class="glide" {% if page.header.autoplay %}data-autoplay="{{ page.header.autoplay }}"{% endif %}>
                     <div class="glide__track" data-glide-el="track">
                         <ul class="glide__slides">
-                            {% for img in page.media.images %}
+                            {% for image in page.media.images %}
                                 <li class="glide__slide">
-                                    {% set service_image = img.derivatives(315,1260,315).sizes('(max-width:600px) 315px, (max-width:1200px) 638px, 50vw') %}
-                                    <img title="{{ page.header.title }}" alt="{{ page.header.alt }}" class="lazyload content__img content__img--glide" data-src="{{ service_image.url(false) }}" data-srcset="{{ service_image.srcset(false) }}" sizes="{{ service_image.sizes(false) }}"> 
+                                    {% set service_image = image.derivatives(315,1260,315).sizes('(max-width:600px) 315px, (max-width:1200px) 638px, 50vw') %}
+                                    <img alt="{{ page.header.alt }}" class="lazyload" data-src="{{ service_image.url(false) }}" data-srcset="{{ service_image.srcset(false) }}" sizes="{{ service_image.sizes(false) }}">
                                 </li>
                             {% endfor %}
                         </ul>
                     </div>
                 </div>
             {% else %}
-                {% for img in page.media.images %}
-                    {% set service_image = img.derivatives(315,1260,315).sizes('(max-width:600px) 315px, (max-width:1200px) 638px, 50vw') %}
-                    <img title="{{ page.header.title }}" alt="{{ page.header.alt }}" class="lazyload content__img" data-src="{{ service_image.url(false) }}" data-srcset="{{ service_image.srcset(false) }}" sizes="{{ service_image.sizes(false) }}"> 
-                {% endfor %}
+                {% if page.media.images %}
+                    {% set service_image = page.media.images|first.derivatives(315,1260,315).sizes('(max-width:600px) 315px, (max-width:1200px) 638px, 50vw') %}
+                    <img title="{{ page.header.title }}" alt="{{ page.header.alt }}" class="lazyload content__img" data-src="{{ service_image.url(false) }}" data-srcset="{{ service_image.srcset(false) }}" sizes="{{ service_image.sizes(false) }}">
+                {% else %}
+                    <video
+                        class="lazyload content__img"
+                        disableRemotePlayback=""
+                        preload="none"
+                        muted=""
+                        loop=""
+                        playsinline=""
+                        src="{{ page.media.videos|first.url }}"
+                        type="video/mp4">
+                    </video>
+                {% endif %}
             {% endif %}
         </div>
     </div>

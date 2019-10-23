@@ -1,20 +1,31 @@
 class Video {
 	constructor(){
-		this.video = document.querySelectorAll('.content__video > source');
-		this.initialize();
+		this.videos = document.querySelectorAll('.content__img-container > video');
+		this.playAndPauseVideo();
+		this.events();
 	}
 
-	initialize() {
-		this.video.forEach(this.lazyLoadVideo.bind(this));
+	events() {
+		window.addEventListener('scroll', event => {
+			this.playAndPauseVideo();
+		})
 	}
 
-	lazyLoadVideo(item) {
-		const src = item.getAttribute('data-src');
-		const video = item.parentElement;
-		item.setAttribute('src', src);
-		video.load();
-		video.play();
+	playAndPauseVideo() {
+		this.videos.forEach((video, index) => {
+			this.isInViewport(video) ? video.play() : video.pause();
+		})
 	}
+
+	isInViewport(elem) {
+		let bounding = elem.getBoundingClientRect();
+		return (
+			bounding.top >= 0 &&
+			bounding.left >= 0 &&
+			bounding.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+			bounding.right <= (window.innerWidth || document.documentElement.clientWidth)
+		);
+	};
 }
 
 export default Video;
