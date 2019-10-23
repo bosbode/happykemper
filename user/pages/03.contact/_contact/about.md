@@ -15,7 +15,7 @@ socials:
         title: Instagram
 ---
 
-Happy Kemper kan jou helpen met het creëren van jouw digitale uitingen. Wat ik belangrijk vind is dat we samen zoeken naar de beste oplossing voor jouw specifieke vraag, van volledige websites tot verhalende webanimaties. Ik ben graag betrokken bij het gehele proces en draag grote zorg voor het werk wat ik doe.  
+Happy Kemper kan jou helpen met het creëren van jouw digitale uitingen. Wat ik belangrijk vind is dat we samen zoeken naar de beste oplossing voor jouw specifieke vraag, van volledige websites tot (verhalende) op maat gemaakte animaties. Ik ben erg betrokken bij het gehele proces en draag grote zorg voor het werk wat ik doe.  
 
 ---
 

@@ -1,5 +1,5 @@
 ---
-switchPosition: true
+switchPosition: false
 fullHeight: false
 title: Wie is John
 alt: Wie is John website screenshot
