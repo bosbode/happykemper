@@ -1,10 +1,18 @@
-/cache
-.DS_Store
+/cache/*
+composer.lock
 /node_modules
 /assets
-/images
+/images/*
 /npm-debug.log
-/logs
+/logs/*
 /user/accounts
 robots.txt
 /user/themes/happykemper/assets/compiled
+/user/data/*
+
+# OS Generated
+.DS_Store*
+ehthumbs.db
+Icon?
+Thumbs.db
+*.swp
