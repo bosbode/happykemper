@@ -9,31 +9,31 @@ body {
 }
 
 h1 {
-    @include responsive-font-size(3.25rem);
+    @include font-size(3.25rem);
     margin: 0.67em 0;
     text-transform: uppercase;
     letter-spacing: 1.2px;
 }
 
 h2 {
-    @include responsive-font-size(1.5rem);
+    @include font-size(1.5rem);
     letter-spacing: -0.01rem;
 }
 
 h3 {
-    @include responsive-font-size(1.25rem);
+    @include font-size(1.25rem);
 }
 
 h4 {
-    @include responsive-font-size(1.125rem);
+    @include font-size(1.125rem);
 }
 
 h5 {
-    @include responsive-font-size(0.75rem);
+    @include font-size(0.75rem);
 }
 
 h6 {
-    @include responsive-font-size(0.625rem);
+    @include font-size(0.625rem);
 }
 
 
@@ -49,7 +49,8 @@ h6 {
 }
 
 p { 
-    @include responsive-font-size(1.5rem);
+    @include font-size(1.5rem);
+    line-height: 125%;
 }
 
 img {
@@ -83,7 +84,7 @@ hr {
 }
 
 ul, ol {
-    @include responsive-font-size(1.5rem); 
+    @include font-size(1.5rem); 
 }
 
 abbr[title]:after {

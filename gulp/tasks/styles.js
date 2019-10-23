@@ -25,7 +25,7 @@ function styles (cb){
 function sass (cb){
 	return gulp.src('./user/themes/' + config.theme + '/assets/styles/main.scss')
 		.pipe(sassGulp({
-			includePaths: ['node_modules/rfs/scss/', 'node_modules/outdatedbrowser/outdatedbrowser', 'node_modules/@glidejs/glide/src/assets/sass', 'node_modules/fullpage.js/dist/', 'node_modules/normalize.css/', './user/themes/' + config.theme + '/assets/fonts/fontawesome/scss/']
+			includePaths: ['node_modules/rfs', 'node_modules/outdatedbrowser/outdatedbrowser', 'node_modules/@glidejs/glide/src/assets/sass', 'node_modules/normalize.css/', './user/themes/' + config.theme + '/assets/fonts/fontawesome/scss/']
 		}))
 		.on('error', function(errorInfo){
 			console.log(errorInfo.toString());
