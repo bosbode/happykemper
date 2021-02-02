@@ -47,6 +47,7 @@ PLUGIN_ADMIN:
   CLOSE: "Fechar"
   CANCEL: "Cancelar"
   CONTINUE: "Continuar"
+  CONFIRM: "Confirmar"
   MODAL_DELETE_PAGE_CONFIRMATION_REQUIRED_TITLE: "Confirmação Requerida"
   MODAL_CHANGED_DETECTED_TITLE: "Alterações Detectadas"
   MODAL_CHANGED_DETECTED_DESC: "Você tem alterações não salvas. Tem certeza que deseja sair sem salvar?"

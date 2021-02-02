@@ -1,5 +1,4 @@
 var path = require('path'),
-UglifyJsPlugin = require('uglifyjs-webpack-plugin'),
 config = require('./gulp/config.json');
 
 module.exports = {
@@ -8,13 +7,9 @@ module.exports = {
 		App: './user/themes/' + config.theme + '/assets/scripts/App.js',
 		Vendor: './user/themes/' + config.theme + '/assets/scripts/Vendor.js'
 	},
-	output: {
-		path: __dirname + '/user/themes/' + config.theme + '/assets/compiled/scripts',
-		filename: '[name].js'
-	},
 	module: {
 		rules: [{
-			test: /\.js$/,
+			test: /\.m?js$/,
 			exclude: /(node_modules|bower_components)/,
 			use: {
 				loader: 'babel-loader',
@@ -24,13 +19,12 @@ module.exports = {
 			}
 		}]
 	},
-	plugins: [
-    new UglifyJsPlugin({
-			uglifyOptions: {
-				compress: {
-					drop_debugger: false
-				}
-			}
-		})
-  ]
+	output: {
+		path: __dirname + '/user/themes/' + config.theme + '/assets/compiled/scripts',
+		filename: '[name].js'
+	},
+	plugins: [],
+	optimization: {
+    minimize: true
+  }
 }

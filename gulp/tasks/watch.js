@@ -1,4 +1,4 @@
-var gulp = require('gulp'),
+const gulp = require('gulp'),
 phpConnect = require('gulp-connect-php'),
 del = require('del'),
 browserSync = require('browser-sync').create(),
@@ -9,16 +9,23 @@ scripts = require('./scripts');
 function watch (){
 
 	browserSync.init({
-        proxy: '127.0.0.1:8010',
-        port: 8080,
-        open: true,
-        notify: false
+		proxy: {
+			target: 'localhost:8080',
+			reqHeaders: function() {
+					return {
+							host: 'localhost:3000'
+					};
+			}
+		},
+		port: 8080,
+		open: false,
+		notify: false
 	});
 	
 	phpConnect.server({ 
 		base: '.', 
 		router: './system/router.php', 
-		port: 8010, 
+		port: 8080, 
 		keepalive: true
 	});
 
@@ -36,7 +43,7 @@ function watch (){
 
 function cssInject (){
 	return gulp.src('./user/themes/' + config.theme + '/assets/compiled/styles/main.css')
-		.pipe(browserSync.stream());
+		.pipe(browserSync.reload({stream:true}));
 };
 
 function browserRefresh(cb){

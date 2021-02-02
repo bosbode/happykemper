@@ -1,4 +1,4 @@
-var gulp = require('gulp'),
+const gulp = require('gulp'),
 gulpModernizr = require('gulp-modernizr'),
 config = require('../config.json');
 

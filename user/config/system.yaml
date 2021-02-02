@@ -6,7 +6,9 @@ force_ssl: false
 username_regex: '^[a-z0-9_-]{3,16}$'
 pwd_regex: '(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}'
 languages:
-  supported: [nl, en]
+  supported:
+    - nl
+    - en
   include_default_lang: false
   translations: true
   translations_fallback: true
@@ -133,3 +135,7 @@ gpm:
   method: auto
   verify_peer: true
   official_gpm_only: true
+strict_mode:
+  yaml_compat: true
+  twig_compat: true
+  blueprint_compat: true

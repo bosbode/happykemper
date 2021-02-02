@@ -1,4 +1,4 @@
-import outdatedBrowser from 'exports-loader?outdatedBrowser!outdatedbrowser/outdatedbrowser/outdatedbrowser.js';
+import browserUpdate from 'browser-update';
 
 class OutdatedBrowser {
 	constructor(){
@@ -6,11 +6,19 @@ class OutdatedBrowser {
 	}
 
 	initialize() {
-		outdatedBrowser({
-			bgColor: '#bea2af',
-			color: '#ffffff',
-			lowerThan: 'font-variation-settings',
-			languagePath: ''
+		browserUpdate({
+			required: {
+				e:79,
+				f:67,
+				o:59,
+				s:7,
+				c:72
+			},
+			reminder: 24,
+			style: 'top',
+			l: 'nl',
+			container: document.querySelector('.body-text'),
+			test: false
 		})
 	}
 }

@@ -14,7 +14,6 @@ A super lightweight PSR-7 implementation. Very strict and very fast.
 | Description | Guzzle | Zend | Slim | Nyholm |
 | ---- | ------ | ---- | ---- | ------ |
 | Lines of code | 3 000 | 3 000 | 1 700 | 1 000 |
-| PHP7 | No | Yes | No | Yes |
 | PSR-7* | 66% | 100% | 75% | 100% |
 | PSR-17 | No | Yes | Yes | Yes |
 | HTTPlug | No | No | No | Yes |
@@ -30,27 +29,27 @@ A super lightweight PSR-7 implementation. Very strict and very fast.
 composer require nyholm/psr7
 ```
 
-If you are using Symfony Flex then you get all message factories registered as services. 
+If you are using Symfony Flex then you get all message factories registered as services.
 
 ## Usage
 
-The PSR-7 objects do not contain any other public methods then those defined in
-the [PSR-7 specification](https://www.php-fig.org/psr/psr-7/). 
+The PSR-7 objects do not contain any other public methods than those defined in
+the [PSR-7 specification](https://www.php-fig.org/psr/psr-7/).
 
 ### Create objects
 
-Use the PSR-17 factory to create requests, streams, URIs etc.  
+Use the PSR-17 factory to create requests, streams, URIs etc.
 
 ```php
-$factory = new \Nyholm\Psr7\Factory\Psr17Factory();
-$request = $factory->createRequest('GET', 'http://tnyholm.se');
-$stream = $factory->createStream('foobar');
+$psr17Factory = new \Nyholm\Psr7\Factory\Psr17Factory();
+$request = $psr17Factory->createRequest('GET', 'http://tnyholm.se');
+$stream = $psr17Factory->createStream('foobar');
 ```
 
 ### Sending a request
 
-With [HTTPlug](http://httplug.io/) or any other PSR-18 (HTTP client) you may send 
-requests like: 
+With [HTTPlug](http://httplug.io/) or any other PSR-18 (HTTP client) you may send
+requests like:
 
 ```bash
 composer require kriswallsmith/buzz
@@ -58,15 +57,15 @@ composer require kriswallsmith/buzz
 
 ```php
 $psr17Factory = new \Nyholm\Psr7\Factory\Psr17Factory();
-$psr18Client = new Buzz\Client\Curl($psr17Factory);
+$psr18Client = new \Buzz\Client\Curl($psr17Factory);
 
-$request = (new Psr17Factory())->createRequest('GET', 'http://tnyholm.se');
+$request = $psr17Factory->createRequest('GET', 'http://tnyholm.se');
 $response = $psr18Client->sendRequest($request);
 ```
 
 ### Create server requests
 
-The [`nyholm/psr7-server`](https://github.com/Nyholm/psr7-server) package can be used 
+The [`nyholm/psr7-server`](https://github.com/Nyholm/psr7-server) package can be used
 to create server requests from PHP superglobals.
 
 ```bash
@@ -74,11 +73,9 @@ composer require nyholm/psr7-server
 ```
 
 ```php
-use Nyholm\Psr7\Factory\Psr17Factory;
+$psr17Factory = new \Nyholm\Psr7\Factory\Psr17Factory();
 
-$psr17Factory = new Psr17Factory();
-
-$creator = new ServerRequestCreator(
+$creator = new \Nyholm\Psr7Server\ServerRequestCreator(
     $psr17Factory, // ServerRequestFactory
     $psr17Factory, // UriFactory
     $psr17Factory, // UploadedFileFactory
@@ -95,16 +92,19 @@ composer require zendframework/zend-httphandlerrunner
 ```
 
 ```php
-$response = (new Psr17Factory())->createReponse('200', 'Hello world');
+$psr17Factory = new \Nyholm\Psr7\Factory\Psr17Factory();
+
+$responseBody = $psr17Factory->createStream('Hello world');
+$response = $psr17Factory->createResponse(200)->withBody($responseBody);
 (new \Zend\HttpHandlerRunner\Emitter\SapiEmitter())->emit($response);
 ```
 
 ## Our goal
 
-This package is currently maintained by [Tobias Nyholm](http://nyholm.se) and 
+This package is currently maintained by [Tobias Nyholm](http://nyholm.se) and
 [Martijn van der Ven](https://vanderven.se/martijn/). They have decided that the
-goal of this library should be to provide a super strict implementation of 
-[PSR-7](https://www.php-fig.org/psr/psr-7/) that is blazing fast. 
+goal of this library should be to provide a super strict implementation of
+[PSR-7](https://www.php-fig.org/psr/psr-7/) that is blazing fast.
 
 The package will never include any extra features nor helper methods. All our classes
-and functions exist because they are required to fulfill the PSR-7 specification. 
+and functions exist because they are required to fulfill the PSR-7 specification.
