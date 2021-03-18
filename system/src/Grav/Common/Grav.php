@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -162,6 +162,19 @@ class Grav extends Container
         return self::$instance;
     }
 
+    /**
+     * Get Grav version.
+     *
+     * @return string
+     */
+    public function getVersion(): string
+    {
+        return GRAV_VERSION;
+    }
+
+    /**
+     * @return bool
+     */
     public function isSetup(): bool
     {
         return isset($this->initialized['setup']);
@@ -413,12 +426,18 @@ class Grav extends Container
         // Clean route for redirect
         $route = preg_replace("#^\/[\\\/]+\/#", '/', $route);
 
-         // Check for code in route
-        $regex = '/.*(\[(30[1-7])\])$/';
-        preg_match($regex, $route, $matches);
-        if ($matches) {
-            $route = str_replace($matches[1], '', $matches[0]);
-            $code = $matches[2];
+        if (null !== $code || $code < 300 || $code > 399) {
+            $code = null;
+        }
+
+        if (null === $code) {
+            // Check for redirect code in the route: e.g. /new/[301], /new[301]/route or /new[301].html
+            $regex = '/.*(\[(30[1-7])\])(.\w+|\/.*?)?$/';
+            preg_match($regex, $route, $matches);
+            if ($matches) {
+                $route = str_replace($matches[1], '', $matches[0]);
+                $code = $matches[2];
+            }
         }
 
         if ($code === null) {

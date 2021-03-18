@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Console\Cli
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -154,8 +154,6 @@ class CleanCommand extends Command
         'vendor/itsgoingd/clockwork/.gitattributes',
         'vendor/itsgoingd/clockwork/CHANGELOG.md',
         'vendor/itsgoingd/clockwork/composer.json',
-        'vendor/kodus/psr7-server/composer.json',
-        'vendor/kodus/psr7-server/CHANGELOG.md',
         'vendor/league/climate/composer.json',
         'vendor/league/climate/CHANGELOG.md',
         'vendor/league/climate/CONTRIBUTING.md',
@@ -197,6 +195,9 @@ class CleanCommand extends Command
         'vendor/nyholm/psr7/phpstan.neon.dist',
         'vendor/nyholm/psr7/CHANGELOG.md',
         'vendor/nyholm/psr7/psalm.xml',
+        'vendor/nyholm/psr7-server/.github',
+        'vendor/nyholm/psr7-server/composer.json',
+        'vendor/nyholm/psr7-server/CHANGELOG.md',
         'vendor/phive/twig-extensions-deferred/.gitignore',
         'vendor/phive/twig-extensions-deferred/.travis.yml',
         'vendor/phive/twig-extensions-deferred/composer.json',

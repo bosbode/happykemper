@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -278,10 +278,10 @@ class Excerpts
             );
         }
 
-        $defaults = $config['images']['defaults'] ?? [];
+        $defaults = $this->config['images']['defaults'] ?? [];
         if (count($defaults)) {
             foreach ($defaults as $method => $params) {
-                if (!array_search($method, array_column($actions, 'method'))) {
+                if (array_search($method, array_column($actions, 'method')) === false) {
                     $actions[] = [
                         'method' => $method,
                         'params' => $params,

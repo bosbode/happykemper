@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -18,6 +18,7 @@ use Grav\Common\Uri;
 use Grav\Framework\Filesystem\Filesystem;
 use RocketTheme\Toolbox\ResourceLocator\UniformResourceLocator;
 use RuntimeException;
+use function dirname;
 use function is_string;
 
 /**
@@ -32,6 +33,8 @@ trait PageRoutableTrait
     private $_route;
     /** @var string|null */
     private $_path;
+    /** @var PageInterface|null */
+    private $_parentCache;
 
     /**
      * Returns the page extension, got from the page `url_extension` config and falls back to the
@@ -149,11 +152,6 @@ trait PageRoutableTrait
         /** @var Uri $uri */
         $uri = $grav['uri'];
         $url = $uri->rootUrl($include_host) . '/' . trim($route, '/') . $this->urlExtension();
-
-        // trim trailing / if not root
-        if ($url !== '/') {
-            $url = rtrim($url, '/');
-        }
 
         return Uri::filterPath($url);
     }
@@ -322,7 +320,7 @@ trait PageRoutableTrait
 
         /** @var UniformResourceLocator $locator */
         $locator = Grav::instance()['locator'];
-        $path = $locator->findResource($folder, false);
+        $path = $locator->isStream($folder) ? $locator->findResource($folder, false) : $folder;
 
         return is_string($path) ? $path : null;
     }
@@ -355,7 +353,7 @@ trait PageRoutableTrait
         if ($folder) {
             /** @var UniformResourceLocator $locator */
             $locator = Grav::instance()['locator'];
-            $folder = $locator($folder);
+            $folder = $locator->isStream($folder) ? $locator->getResource($folder) : GRAV_ROOT . "/{$folder}";
         }
 
         return $this->_path = is_string($folder) ? $folder : null;
@@ -418,13 +416,12 @@ trait PageRoutableTrait
             throw new RuntimeException(__METHOD__ . '(PageInterface): Not Implemented');
         }
 
-        if ($this->root()) {
-            return null;
+        if ($this->_parentCache || $this->root()) {
+            return $this->_parentCache;
         }
 
-        $filesystem = Filesystem::getInstance(false);
         $directory = $this->getFlexDirectory();
-        $parentKey = ltrim($filesystem->dirname("/{$this->getKey()}"), '/');
+        $parentKey = ltrim(dirname("/{$this->getKey()}"), '/');
         if ($parentKey) {
             $parent = $directory->getObject($parentKey);
             $language = $this->getLanguage();
@@ -432,12 +429,14 @@ trait PageRoutableTrait
                 $parent = $parent->getTranslation($language) ?? $parent;
             }
 
-            return $parent;
+            $this->_parentCache = $parent;
+        } else {
+            $index = $directory->getIndex();
+
+            $this->_parentCache = method_exists($index, 'getRoot') ? $index->getRoot() : null;
         }
 
-        $index = $directory->getIndex();
-
-        return method_exists($index, 'getRoot') ? $index->getRoot() : null;
+        return $this->_parentCache;
     }
 
     /**

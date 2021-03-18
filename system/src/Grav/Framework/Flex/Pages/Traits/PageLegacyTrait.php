@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -277,6 +277,8 @@ trait PageLegacyTrait
             throw new RuntimeException('Failed: Cannot set page parent to a child of current page');
         }
 
+        $this->storeOriginal();
+
         // TODO:
         throw new RuntimeException(__METHOD__ . '(): Not Implemented');
     }
@@ -292,6 +294,8 @@ trait PageLegacyTrait
      */
     public function copy(PageInterface $parent = null)
     {
+        $this->storeOriginal();
+
         $filesystem = Filesystem::getInstance(false);
 
         $parentStorageKey = ltrim($filesystem->dirname("/{$this->getMasterKey()}"), '/');
@@ -619,7 +623,7 @@ trait PageLegacyTrait
             // Get initial metadata for the page
             $metadata = array_merge($defaultMetadata, $siteMetadata, $headerMetadata);
 
-            $header_tag_http_equivs = ['content-type', 'default-style', 'refresh', 'x-ua-compatible'];
+            $header_tag_http_equivs = ['content-type', 'default-style', 'refresh', 'x-ua-compatible', 'content-security-policy'];
             $escape = !$config->get('system.strict_mode.twig_compat', false) || $config->get('system.twig.autoescape', true);
 
             // Build an array of meta objects..
@@ -643,7 +647,7 @@ trait PageLegacyTrait
                     if (in_array($key, $header_tag_http_equivs, true)) {
                         $this->_metadata[$key] = [
                             'http_equiv' => $key,
-                            'content' => $escape ? htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $value
+                            'content' => $escape ? htmlspecialchars($value, ENT_COMPAT, 'UTF-8') : $value
                         ];
                     } elseif ($key === 'charset') {
                         $this->_metadata[$key] = ['charset' => $escape ? htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $value];
@@ -715,8 +719,9 @@ trait PageLegacyTrait
 
         /** @var UniformResourceLocator $locator */
         $locator = Grav::instance()['locator'];
+        $folder = $locator->isStream($folder) ? $locator->getResource($folder) : GRAV_ROOT . "/{$folder}";
 
-        return $locator->findResource($folder, true, true) . '/' . ($this->isPage() ? $this->name() : 'default.md');
+        return $folder . '/' . ($this->isPage() ? $this->name() : 'default.md');
     }
 
     /**
@@ -733,8 +738,9 @@ trait PageLegacyTrait
 
         /** @var UniformResourceLocator $locator */
         $locator = Grav::instance()['locator'];
+        $folder = $locator->isStream($folder) ? $locator->getResource($folder, false) : $folder;
 
-        return $locator->findResource($folder, false, true) .  '/' . ($this->isPage() ? $this->name() : 'default.md');
+        return $folder .  '/' . ($this->isPage() ? $this->name() : 'default.md');
     }
 
     /**
@@ -1083,18 +1089,6 @@ trait PageLegacyTrait
     public function folderExists(): bool
     {
         return $this->exists() || is_dir($this->getStorageFolder() ?? '');
-    }
-
-    /**
-     * Gets the Page Unmodified (original) version of the page.
-     *
-     * Assumes that object has been cloned before modifying it.
-     *
-     * @return PageInterface|null The original version of the page.
-     */
-    public function getOriginal()
-    {
-        return $this->getFlexDirectory()->getObject($this->getKey());
     }
 
     /**

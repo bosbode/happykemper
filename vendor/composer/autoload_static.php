@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInit91dc3000526e143ea598fb136ba6f289
+class ComposerStaticInit5c1e16471a1d453e21c9f5f576f5bae5
 {
     public static $files = array (
         'a4a119a56e50fbb293281d9a48007e0e' => __DIR__ . '/..' . '/symfony/polyfill-php80/bootstrap.php',
@@ -255,7 +255,7 @@ class ComposerStaticInit91dc3000526e143ea598fb136ba6f289
         ),
         'Nyholm\\Psr7Server\\' => 
         array (
-            0 => __DIR__ . '/..' . '/kodus/psr7-server/src',
+            0 => __DIR__ . '/..' . '/nyholm/psr7-server/src',
         ),
         'Negotiation\\' => 
         array (
@@ -603,6 +603,9 @@ class ComposerStaticInit91dc3000526e143ea598fb136ba6f289
         'Grav\\Common\\Filesystem\\RecursiveDirectoryFilterIterator' => __DIR__ . '/../..' . '/system/src/Grav/Common/Filesystem/RecursiveDirectoryFilterIterator.php',
         'Grav\\Common\\Filesystem\\RecursiveFolderFilterIterator' => __DIR__ . '/../..' . '/system/src/Grav/Common/Filesystem/RecursiveFolderFilterIterator.php',
         'Grav\\Common\\Filesystem\\ZipArchiver' => __DIR__ . '/../..' . '/system/src/Grav/Common/Filesystem/ZipArchiver.php',
+        'Grav\\Common\\Flex\\FlexCollection' => __DIR__ . '/../..' . '/system/src/Grav/Common/Flex/FlexCollection.php',
+        'Grav\\Common\\Flex\\FlexIndex' => __DIR__ . '/../..' . '/system/src/Grav/Common/Flex/FlexIndex.php',
+        'Grav\\Common\\Flex\\FlexObject' => __DIR__ . '/../..' . '/system/src/Grav/Common/Flex/FlexObject.php',
         'Grav\\Common\\Flex\\Traits\\FlexCollectionTrait' => __DIR__ . '/../..' . '/system/src/Grav/Common/Flex/Traits/FlexCollectionTrait.php',
         'Grav\\Common\\Flex\\Traits\\FlexCommonTrait' => __DIR__ . '/../..' . '/system/src/Grav/Common/Flex/Traits/FlexCommonTrait.php',
         'Grav\\Common\\Flex\\Traits\\FlexGravTrait' => __DIR__ . '/../..' . '/system/src/Grav/Common/Flex/Traits/FlexGravTrait.php',
@@ -1251,11 +1254,10 @@ class ComposerStaticInit91dc3000526e143ea598fb136ba6f289
         'Negotiation\\Exception\\InvalidMediaType' => __DIR__ . '/..' . '/willdurand/negotiation/src/Negotiation/Exception/InvalidMediaType.php',
         'Negotiation\\LanguageNegotiator' => __DIR__ . '/..' . '/willdurand/negotiation/src/Negotiation/LanguageNegotiator.php',
         'Negotiation\\Negotiator' => __DIR__ . '/..' . '/willdurand/negotiation/src/Negotiation/Negotiator.php',
-        'Nyholm\\Psr7Server\\ServerRequestCreator' => __DIR__ . '/..' . '/kodus/psr7-server/src/ServerRequestCreator.php',
-        'Nyholm\\Psr7Server\\ServerRequestCreatorInterface' => __DIR__ . '/..' . '/kodus/psr7-server/src/ServerRequestCreatorInterface.php',
+        'Nyholm\\Psr7Server\\ServerRequestCreator' => __DIR__ . '/..' . '/nyholm/psr7-server/src/ServerRequestCreator.php',
+        'Nyholm\\Psr7Server\\ServerRequestCreatorInterface' => __DIR__ . '/..' . '/nyholm/psr7-server/src/ServerRequestCreatorInterface.php',
         'Nyholm\\Psr7\\Factory\\HttplugFactory' => __DIR__ . '/..' . '/nyholm/psr7/src/Factory/HttplugFactory.php',
         'Nyholm\\Psr7\\Factory\\Psr17Factory' => __DIR__ . '/..' . '/nyholm/psr7/src/Factory/Psr17Factory.php',
-        'Nyholm\\Psr7\\LowercaseTrait' => __DIR__ . '/..' . '/nyholm/psr7/src/LowercaseTrait.php',
         'Nyholm\\Psr7\\MessageTrait' => __DIR__ . '/..' . '/nyholm/psr7/src/MessageTrait.php',
         'Nyholm\\Psr7\\Request' => __DIR__ . '/..' . '/nyholm/psr7/src/Request.php',
         'Nyholm\\Psr7\\RequestTrait' => __DIR__ . '/..' . '/nyholm/psr7/src/RequestTrait.php',
@@ -2066,11 +2068,11 @@ class ComposerStaticInit91dc3000526e143ea598fb136ba6f289
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInit91dc3000526e143ea598fb136ba6f289::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInit91dc3000526e143ea598fb136ba6f289::$prefixDirsPsr4;
-            $loader->fallbackDirsPsr4 = ComposerStaticInit91dc3000526e143ea598fb136ba6f289::$fallbackDirsPsr4;
-            $loader->prefixesPsr0 = ComposerStaticInit91dc3000526e143ea598fb136ba6f289::$prefixesPsr0;
-            $loader->classMap = ComposerStaticInit91dc3000526e143ea598fb136ba6f289::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit5c1e16471a1d453e21c9f5f576f5bae5::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit5c1e16471a1d453e21c9f5f576f5bae5::$prefixDirsPsr4;
+            $loader->fallbackDirsPsr4 = ComposerStaticInit5c1e16471a1d453e21c9f5f576f5bae5::$fallbackDirsPsr4;
+            $loader->prefixesPsr0 = ComposerStaticInit5c1e16471a1d453e21c9f5f576f5bae5::$prefixesPsr0;
+            $loader->classMap = ComposerStaticInit5c1e16471a1d453e21c9f5f576f5bae5::$classMap;
 
         }, null, ClassLoader::class);
     }

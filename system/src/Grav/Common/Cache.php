@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -71,6 +71,7 @@ class Cache extends Getters
         'cache://twig/',
         'cache://doctrine/',
         'cache://compiled/',
+        'cache://clockwork/',
         'cache://validated-',
         'cache://images',
         'asset://',
@@ -80,6 +81,7 @@ class Cache extends Getters
         'cache://twig/',
         'cache://doctrine/',
         'cache://compiled/',
+        'cache://clockwork/',
         'cache://validated-',
         'asset://',
     ];
@@ -296,6 +298,7 @@ class Cache extends Getters
                     $redis = new \Redis();
                     $socket = $this->config->get('system.cache.redis.socket', false);
                     $password = $this->config->get('system.cache.redis.password', false);
+                    $databaseId = $this->config->get('system.cache.redis.database', 0);
 
                     if ($socket) {
                         $redis->connect($socket);
@@ -309,6 +312,11 @@ class Cache extends Getters
                     // Authenticate with password if set
                     if ($password && !$redis->auth($password)) {
                         throw new \RedisException('Redis authentication failed');
+                    }
+
+                    // Select alternate ( !=0 ) database ID if set
+                    if ($databaseId && !$redis->select($databaseId)) {
+                        throw new \RedisException('Could not select alternate Redis database ID');
                     }
 
                     $driver = new DoctrineCache\RedisCache();
@@ -492,7 +500,7 @@ class Cache extends Getters
                                 $anything = true;
                             }
                         } elseif (is_dir($file)) {
-                            if (Folder::delete($file)) {
+                            if (Folder::delete($file, false)) {
                                 $anything = true;
                             }
                         }

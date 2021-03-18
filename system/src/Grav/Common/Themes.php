@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -33,10 +33,8 @@ class Themes extends Iterator
 {
     /** @var Grav */
     protected $grav;
-
     /** @var Config */
     protected $config;
-
     /** @var bool */
     protected $inited = false;
 
@@ -93,6 +91,20 @@ class Themes extends Iterator
                 /** @var EventDispatcher $events */
                 $events = $this->grav['events'];
                 $events->addSubscriber($instance);
+            }
+
+            // Register blueprints.
+            if (is_dir('theme://blueprints/pages')) {
+                /** @var UniformResourceLocator $locator */
+                $locator = $this->grav['locator'];
+                $locator->addPath('blueprints', '', ['theme://blueprints'], ['user', 'blueprints']);
+            }
+
+            // Register form fields.
+            if (method_exists($instance, 'getFormFieldTypes')) {
+                /** @var Plugins $plugins */
+                $plugins = $this->grav['plugins'];
+                $plugins->formFieldTypes = $instance->getFormFieldTypes() + $plugins->formFieldTypes;
             }
 
             $this->grav['theme'] = $instance;
@@ -318,6 +330,7 @@ class Themes extends Iterator
 
     /**
      * Load theme languages.
+     * Reads ALL language files from theme stream and merges them.
      *
      * @param Config $config Configuration class
      * @return void
@@ -328,13 +341,13 @@ class Themes extends Iterator
         $locator = $this->grav['locator'];
 
         if ($config->get('system.languages.translations', true)) {
-            $language_file = $locator->findResource('theme://languages' . YAML_EXT);
-            if ($language_file) {
+            $language_files = array_reverse($locator->findResources('theme://languages' . YAML_EXT));
+            foreach ($language_files as $language_file) {
                 $language = CompiledYamlFile::instance($language_file)->content();
                 $this->grav['languages']->mergeRecursive($language);
             }
-            $languages_folder = $locator->findResource('theme://languages');
-            if (file_exists($languages_folder)) {
+            $languages_folders = array_reverse($locator->findResources('theme://languages'));
+            foreach ($languages_folders as $languages_folder) {
                 $languages = [];
                 $iterator = new DirectoryIterator($languages_folder);
                 foreach ($iterator as $file) {
@@ -381,7 +394,10 @@ class Themes extends Iterator
             }
 
             // Try Old style theme classes
-            $path = strtolower(preg_replace('#\\\|_(?!.+\\\)#', '/', $class));
+            $path = preg_replace('#\\\|_(?!.+\\\)#', '/', $class);
+            \assert(null !== $path);
+
+            $path = strtolower($path);
             $file = $locator("themes://{$path}/theme.php") ?: $locator("themes://{$path}/{$path}.php");
 
             // Load class

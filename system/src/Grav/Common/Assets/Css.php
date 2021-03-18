@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Assets
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -47,6 +47,6 @@ class Css extends BaseAsset
             return "<style>\n" . trim($buffer) . "\n</style>\n";
         }
 
-        return '<link href="' . trim($this->asset) . $this->renderQueryString() . '"' . $this->renderAttributes() . ">\n";
+        return '<link href="' . trim($this->asset) . $this->renderQueryString() . '"' . $this->renderAttributes() . $this->integrityHash($this->asset) . ">\n";
     }
 }

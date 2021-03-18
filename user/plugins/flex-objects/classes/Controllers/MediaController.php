@@ -14,6 +14,7 @@ use Grav\Common\Page\Medium\MediumFactory;
 use Grav\Common\Session;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
+use Grav\Framework\Flex\FlexFormFlash;
 use Grav\Framework\Flex\FlexObject;
 use Grav\Framework\Flex\Interfaces\FlexAuthorizeInterface;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
@@ -209,7 +210,8 @@ class MediaController extends AbstractController
 
         if ($object instanceof PageInterface) {
             // Backwards compatibility to existing plugins.
-            $this->grav->fireEvent('onAdminAfterAddMedia', new Event(['page' => $object]));
+            // DEPRECATED: page
+            $this->grav->fireEvent('onAdminAfterAddMedia', new Event(['object' => $object, 'page' => $object]));
         }
 
         $response = [
@@ -251,6 +253,12 @@ class MediaController extends AbstractController
         }
 
         $object->deleteMediaFile($filename);
+
+        if ($object instanceof PageInterface) {
+            // Backwards compatibility to existing plugins.
+            // DEPRECATED: page
+            $this->grav->fireEvent('onAdminAfterDelMedia', new Event(['object' => $object, 'page' => $object, 'media' => $object->getMedia(), 'filename' => $filename]));
+        }
 
         $response = [
             'code'    => 200,
@@ -320,13 +328,29 @@ class MediaController extends AbstractController
         $folderIsString = \is_string($fieldFolder);
 
         // Backwards compatibility.
-        if ($folderIsString && \in_array($fieldFolder, ['@self', 'self@'])) {
-            $fieldFolder = null;
-        } elseif ($object instanceof PageInterface) {
-            // TODO: Add support for @page, @root and @taxonomy
-            if ($folderIsString && strpos($fieldFolder, '@') !== false) {
-                if (\in_array($fieldFolder, ['@page.self', 'page@.self'])) {
-                    $fieldFolder = null;
+        $hasToken = $folderIsString && strpos($fieldFolder, '@') !== false;
+        if ($hasToken) {
+            if (\in_array($fieldFolder, ['@self', 'self@'])) {
+                $fieldFolder = null;
+            } else {
+                $regex = '/^(?:(?:@page|page@):(.*))|(?:(?:@theme|theme@):\/?(.*))$/u';
+                preg_match($regex, $fieldFolder, $matches);
+                if ($matches) {
+                    if ($matches[1] !== '') {
+                        $route = trim($matches[1], '/');
+                        if ($route === '') {
+                            $grav = Grav::instance();
+                            $route = trim($grav['config']->get('system.home.alias'), '/');
+                        }
+
+                        $page = $this->getFlex()->getObject($route, 'pages');
+                        if (!$page instanceof PageInterface) {
+                            throw new RuntimeException('Page route not found: /' . $route);
+                        }
+                        $fieldFolder = $page->getMediaFolder();
+                    } elseif ($matches[2] !== '') {
+                        $fieldFolder = "theme://{$matches[2]}";
+                    }
                 }
             }
         }
@@ -412,17 +436,15 @@ class MediaController extends AbstractController
 
     /**
      * @param FlexObjectInterface $object
-     * @return FormFlash
+     * @return FlexFormFlash
      */
     protected function getFormFlash(FlexObjectInterface $object)
     {
-        $grav = Grav::instance();
-
         /** @var Session $session */
-        $session = $grav['session'];
+        $session = $this->grav['session'];
 
         /** @var Uri $uri */
-        $uri = $grav['uri'];
+        $uri = $this->grav['uri'];
         $url = $uri->url;
 
         $formName = $this->getPost('__form-name__');
@@ -440,8 +462,10 @@ class MediaController extends AbstractController
             'unique_id' => $uniqueId,
             'form_name' => $formName,
         ];
-        $flash = new FormFlash($config);
-        $flash->setUrl($url)->setUser($grav['user']);
+        $flash = new FlexFormFlash($config);
+        if (!$flash->exists()) {
+            $flash->setUrl($url)->setUser($this->grav['user']);
+        }
 
         return $flash;
     }
@@ -457,7 +481,7 @@ class MediaController extends AbstractController
 
         foreach ((array)$settings['accept'] as $type) {
             $find = str_replace('*', '.*', $type);
-            $valid |= preg_match('#' . $find . '$#', $file);
+            $valid |= preg_match('#' . $find . '$#i', $file);
         }
 
         return $valid;

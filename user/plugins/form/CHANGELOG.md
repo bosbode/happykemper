@@ -1,3 +1,29 @@
+# v5.0.1
+## 03/17/2021
+
+1. [](#improved)
+   * Updated `de` language [#510](https://github.com/getgrav/grav-plugin-form/pull/510)
+   * Better field type definitions for avatar and file fields
+1. [](#bugfix)
+   * Fixed toggle highlight when there's no value
+   * Fixed wrong selected values in `select` field with integer and boolean values
+   * Fixed changelog display [#502](https://github.com/getgrav/grav-plugin-form/pull/502)
+
+# v5.0.0
+## 02/17/2021
+
+1. [](#new)
+   * Requires **Grav 1.7.0**
+   * Allow admins to temporarily disable form process actions by setting the value to `false` [#481](https://github.com/getgrav/grav-plugin-form/pull/481)
+1. [](#improved)
+   * Add `id` attribute to hidden field [#495](https://github.com/getgrav/grav-plugin-form/pull/495)
+   * Escape text as YAML in multi-line textarea [#464](https://github.com/getgrav/grav-plugin-form/pull/464)
+1. [](#bugfix)
+   * Fixed reCaptcha v3 incompatibility with multiple forms on the same page sharing different actions [#416](https://github.com/getgrav/grav-plugin-form/issues/416)
+   * Toggle fields do not save `false` if they are `toggleable` [#497](https://github.com/getgrav/grav-plugin-form/issues/497)
+   * Data template fixes [#494](https://github.com/getgrav/grav-plugin-form/pull/494)
+   * Fix deprecated Twig method
+
 # v4.3.1
 ## 01/31/2021
 
@@ -101,6 +127,7 @@
 
 # v4.0.6
 ## 03/19/2020
+
 1. [](#new)
     * CHANGE: Form labels are now displayed in `raw` format so you can use HTML in them
     * Added support for `name` attribute on buttons [#411](https://github.com/getgrav/grav-plugin-form/issues/411)

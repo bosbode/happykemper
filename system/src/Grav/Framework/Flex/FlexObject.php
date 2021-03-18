@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -883,6 +883,14 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
             'elements:private' => $this->getElements(),
             'storage:private' => $this->getMetaData()
         ];
+    }
+
+    /**
+     * Clone object.
+     */
+    public function __clone()
+    {
+        // Allows future compatibility as parent::__clone() works.
     }
 
     protected function markAsCopy(): void

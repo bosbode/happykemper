@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -449,7 +449,6 @@ class Pages
             }
         }
 
-        // Remove any inclusive sets from filter.
         $filters = $params['filter'] ?? [];
 
         // Assume published=true if not set.
@@ -457,8 +456,27 @@ class Pages
             $filters['published'] = true;
         }
 
+        // Remove any inclusive sets from filter.
+        $sets = ['published', 'visible', 'modular', 'routable'];
+        foreach ($sets as $type) {
+            $nonType = "non-{$type}";
+            if (isset($filters[$type], $filters[$nonType]) && $filters[$type] === $filters[$nonType]) {
+                if (!$filters[$type]) {
+                    // Both options are false, return empty collection as nothing can match the filters.
+                    return new Collection();
+                }
+
+                // Both options are true, remove opposite filters as all pages will match the filters.
+                unset($filters[$type], $filters[$nonType]);
+            }
+        }
+
         // Filter the collection
         foreach ($filters as $type => $filter) {
+            if (null === $filter) {
+                continue;
+            }
+
             // Convert non-type to type.
             if (str_starts_with($type, 'non-')) {
                 $type = substr($type, 4);
@@ -751,6 +769,9 @@ class Pages
     public function get($path)
     {
         $path = (string)$path;
+        if ($path === '') {
+            return null;
+        }
 
         // Check for local instances first.
         if (array_key_exists($path, $this->instances)) {
@@ -759,8 +780,26 @@ class Pages
 
         $instance = $this->index[$path] ?? null;
         if (is_string($instance)) {
-            $instance = $this->directory ? $this->directory->getObject($instance, 'flex_key') : null;
-            if ($instance) {
+            if ($this->directory) {
+                /** @var Language $language */
+                $language = $this->grav['language'];
+                $lang = $language->getActive();
+                if ($lang) {
+                    $languages = $language->getFallbackLanguages($lang, true);
+                    $key = $instance;
+                    $instance = null;
+                    foreach ($languages as $code) {
+                        $test = $code ? $key . ':' . $code : $key;
+                        if (($instance = $this->directory->getObject($test, 'flex_key')) !== null) {
+                            break;
+                        }
+                    }
+                } else {
+                    $instance = $this->directory->getObject($instance, 'flex_key');
+                }
+            }
+
+            if ($instance instanceof PageInterface) {
                 if ($this->fire_events && method_exists($instance, 'initialize')) {
                     $instance->initialize();
                 }
@@ -1135,7 +1174,14 @@ class Pages
                 $event->types = $types;
                 $grav->fireEvent('onGetPageBlueprints', $event);
 
-                $types->scanBlueprints('theme://blueprints/');
+                $types->init();
+
+                // Try new location first.
+                $lookup = 'theme://blueprints/pages/';
+                if (!is_dir($lookup)) {
+                    $lookup = 'theme://blueprints/';
+                }
+                $types->scanBlueprints($lookup);
 
                 // Scan templates
                 $event = new Event();
