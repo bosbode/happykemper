@@ -1,8 +1,8 @@
 ---
-title: Laagdrempelig voor gebruiker en beheerder
+title: Laagdrempelig in gebruik
 image: value-02.svg
 ---
 
-Om op te vallen is het naast informatie visueel en interactief maken ook belangrijk dat het makkelijk is in gebruik. Door inzet van moderne technieken en een modern CMS, kun je blijven groeien en ontwikkelen. Zo is de drempel zo laag mogelijk, niet alleen voor de klant maar ook voor jou.
+Naast informatie visueel en interactief maken is het ook belangrijk dat het makkelijk is in gebruik, niet alleen voor je klanten maar ook voor jou. Door inzet van moderne technieken, heb je een solide basis waarop je verder kunt ontwikkelen.
 
 *[CMS]: Content Management System

@@ -10,8 +10,8 @@ content:
         dir: asc
         custom:
             - _landing
-            - _values
             - _about
+            - _values
             - _contact
 ---
 
