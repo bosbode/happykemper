@@ -1,5 +1,5 @@
 ---
-switchPosition: true
+switchPosition: false
 fullHeight: false
 title: Dept
 alt: Dept logo

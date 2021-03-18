@@ -19,7 +19,6 @@ De website is 'mobile friendly' en tot stand gekomen met de volgende technieken:
 - Gulp
 - ES6
 - GSAP
-- ScrollMagic
 
 *[BEM]: Block Element Modifier
 *[Grav]: CMS (Content Management System)
@@ -28,4 +27,3 @@ De website is 'mobile friendly' en tot stand gekomen met de volgende technieken:
 *[Gulp]: The streaming build system (automation tool)
 *[ES6]: Javascript
 *[GSAP]: GreenSock Animation Platform
-*[ScrollMagic]: The javascript library for magical scroll interactions

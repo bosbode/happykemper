@@ -9,7 +9,10 @@ content:
         by: default
         dir: asc
         custom:
+                - _robdekruijf
+                - _stories-of-change
                 - _ffono
+                - _des-fonds
                 - _walkinfish
                 - _wieisjohn
                 - _dept

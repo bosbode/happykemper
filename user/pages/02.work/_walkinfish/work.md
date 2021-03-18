@@ -1,5 +1,5 @@
 ---
-switchPosition: true
+switchPosition: false
 fullHeight: false
 autoplay: 3000
 title: The Walk'in Fish
