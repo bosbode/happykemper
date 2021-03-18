@@ -4,6 +4,7 @@ fullHeight: false
 autoplay: false
 title: Stories of Change
 alt: Stories of Change Landing page
+order: 2
 ---
 
 # Stories of Change

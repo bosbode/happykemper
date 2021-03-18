@@ -1,7 +1,8 @@
 ---
 switchPosition: true
 fullHeight: false
-title: Wie ben ik!?
+title: 'Wie ben ik!?'
+order: 2
 ---
 
 Mijn affectie voor het web is ontstaan doordat het een snel ontwikkelend medium is. Hierdoor heb ik de ruimte om te blijven leren en te groeien. Ik wil altijd weten hoe dingen (technisch) tot in de puntjes in elkaar zitten. Zo doe ik vaak tussen projecten door allerlei cursussen. Wat er voor zorgt dat ik up-to-date ben met de laatste web gerelateerde ontwikkelingen. 

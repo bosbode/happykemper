@@ -1,18 +1,12 @@
 ---
-title: Happy Kemper - Over
+title: 'Happy Kemper - Over'
 menu: over
 pageClass: about
 onpage_menu: false
 content:
-    items: @self.modular
+    items: '@self.modular'
     order:
         by: default
         dir: asc
-        custom:
-            - _landing
-            - _about
-            - _values
-            - _contact
 ---
-
 

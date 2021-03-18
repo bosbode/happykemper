@@ -3,6 +3,7 @@ switchPosition: false
 fullHeight: false
 title: Dept
 alt: Dept logo
+order: 7
 ---
 
 # DEPT

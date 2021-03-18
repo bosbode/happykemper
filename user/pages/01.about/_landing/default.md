@@ -4,6 +4,7 @@ bgcolor: pink
 image: about-01.svg
 switchPosition: false
 fullHeight: true
+order: 1
 ---
 
 # WELKOM

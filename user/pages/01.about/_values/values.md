@@ -1,12 +1,13 @@
 ---
 title: Focus
 bgcolor: pink
+order: 3
 content:
-    items: @self.modular
+    items: '@self.modular'
     order:
         by: default
         dir: asc
-        custom:
+        custom: null
 ---
 
 # Focus

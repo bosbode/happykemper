@@ -4,6 +4,7 @@ fullHeight: false
 autoplay: false
 title: DES Fonds
 alt: DES Fonds Landing page
+order: 4
 ---
 
 # DES Fonds
