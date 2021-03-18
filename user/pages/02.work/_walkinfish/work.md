@@ -4,6 +4,7 @@ fullHeight: false
 autoplay: 3000
 title: The Walk'in Fish
 alt: Restaurant The Walk'in Fish website impressions
+order: 5
 ---
 
 # THE WALK’IN FISH

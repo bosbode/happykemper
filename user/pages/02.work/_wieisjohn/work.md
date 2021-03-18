@@ -3,6 +3,7 @@ switchPosition: true
 fullHeight: false
 title: Wie is John
 alt: Wie is John website screenshot
+order: 6
 ---
 
 # WIE IS JOHN?
