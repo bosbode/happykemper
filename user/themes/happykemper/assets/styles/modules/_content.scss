@@ -68,6 +68,10 @@
 			padding-top: 0;
 			align-self: center;
 			order: 0;
+
+			&:last-of-type {
+				margin-right: 0;
+			}
 		}
 		
 		& > h1 {
@@ -93,6 +97,7 @@
 				color: white;
 				padding: 5px;
 				border-radius: 5px;
+				cursor: pointer;
 
 				@include breakpoint(desktop) {
 					margin: 7px 7px 7px 0;
