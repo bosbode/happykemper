@@ -30,7 +30,7 @@ private static $installed = array (
     'aliases' => 
     array (
     ),
-    'reference' => 'be3d49163dc4c2bc622115882233146a98313279',
+    'reference' => 'ba8b91ad2962939c0c16d40adb662eb48acfb918',
     'name' => 'getgrav/grav',
   ),
   'versions' => 
@@ -82,12 +82,12 @@ private static $installed = array (
     ),
     'donatj/phpuseragentparser' => 
     array (
-      'pretty_version' => 'v1.3.0',
-      'version' => '1.3.0.0',
+      'pretty_version' => 'v1.4.0',
+      'version' => '1.4.0.0',
       'aliases' => 
       array (
       ),
-      'reference' => 'f9a521726b2ce4c5173281ceaab5a02c05b691ef',
+      'reference' => '246c1cf0a44f07168c702203bf30d5f48f17bab0',
     ),
     'dragonmantank/cron-expression' => 
     array (
@@ -127,12 +127,12 @@ private static $installed = array (
     ),
     'filp/whoops' => 
     array (
-      'pretty_version' => '2.9.2',
-      'version' => '2.9.2.0',
+      'pretty_version' => '2.10.0',
+      'version' => '2.10.0.0',
       'aliases' => 
       array (
       ),
-      'reference' => 'df7933820090489623ce0be5e85c7e693638e536',
+      'reference' => '6ecda5217bf048088b891f7403b262906be5a957',
     ),
     'getgrav/grav' => 
     array (
@@ -141,7 +141,7 @@ private static $installed = array (
       'aliases' => 
       array (
       ),
-      'reference' => 'be3d49163dc4c2bc622115882233146a98313279',
+      'reference' => 'ba8b91ad2962939c0c16d40adb662eb48acfb918',
     ),
     'gregwar/cache' => 
     array (
