@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -40,6 +40,8 @@ class FolderStorage extends AbstractFilesystemStorage
     protected $dataFolder;
     /** @var string Pattern to access an object. */
     protected $dataPattern = '{FOLDER}/{KEY}/{FILE}{EXT}';
+    /** @var string[] */
+    protected $variables = ['FOLDER' => '%1$s', 'KEY' => '%2$s', 'KEY:2' => '%3$s', 'FILE' => '%4$s', 'EXT' => '%5$s'];
     /** @var string Filename for the object. */
     protected $dataFile;
     /** @var string File extension for the object. */
@@ -222,6 +224,7 @@ class FolderStorage extends AbstractFilesystemStorage
      * @param string $src
      * @param string $dst
      * @return bool
+     * @throws RuntimeException
      */
     public function copyRow(string $src, string $dst): bool
     {
@@ -245,6 +248,7 @@ class FolderStorage extends AbstractFilesystemStorage
     /**
      * {@inheritdoc}
      * @see FlexStorageInterface::renameRow()
+     * @throws RuntimeException
      */
     public function renameRow(string $src, string $dst): bool
     {
@@ -348,7 +352,7 @@ class FolderStorage extends AbstractFilesystemStorage
      */
     protected function getKeyFromPath(string $path): string
     {
-        return basename($path);
+        return Utils::basename($path);
     }
 
     /**
@@ -379,6 +383,12 @@ class FolderStorage extends AbstractFilesystemStorage
             $data = (array)$file->content();
             if (isset($data[0])) {
                 throw new RuntimeException('Broken object file');
+            }
+
+            // Add key field to the object.
+            $keyField = $this->keyField;
+            if ($keyField !== 'storage_key' && !isset($data[$keyField])) {
+                $data[$keyField] = $key;
             }
         } catch (RuntimeException $e) {
             $data = ['__ERROR' => $e->getMessage()];
@@ -626,7 +636,7 @@ class FolderStorage extends AbstractFilesystemStorage
         $flags = FilesystemIterator::KEY_AS_PATHNAME | FilesystemIterator::CURRENT_AS_FILEINFO | FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS;
 
         $iterator = new FilesystemIterator($path, $flags);
-        $list = [];
+        $list = [[]];
         /** @var SplFileInfo $info */
         foreach ($iterator as $filename => $info) {
             if (!$info->isDir() || strpos($info->getFilename(), '.') === 0) {
@@ -636,11 +646,7 @@ class FolderStorage extends AbstractFilesystemStorage
             $list[] = $this->buildIndexFromFilesystem($filename);
         }
 
-        if (!$list) {
-            return [];
-        }
-
-        return count($list) > 1 ? array_merge(...$list) : $list[0];
+        return array_merge(...$list);
     }
 
     /**
@@ -682,7 +688,7 @@ class FolderStorage extends AbstractFilesystemStorage
                 $pattern .= '/{FILE}{EXT}';
             } else {
                 $filesystem = Filesystem::getInstance(true);
-                $this->dataFile = basename($pattern, $extension);
+                $this->dataFile = Utils::basename($pattern, $extension);
                 $pattern = $filesystem->dirname($pattern) . '/{FILE}{EXT}';
             }
         }
@@ -692,9 +698,7 @@ class FolderStorage extends AbstractFilesystemStorage
         $this->keyLen = (int)($options['key_len'] ?? 32);
         $this->caseSensitive = (bool)($options['case_sensitive'] ?? true);
 
-        $variables = ['FOLDER' => '%1$s', 'KEY' => '%2$s', 'KEY:2' => '%3$s', 'FILE' => '%4$s', 'EXT' => '%5$s'];
-        $pattern = Utils::simpleTemplate($pattern, $variables);
-
+        $pattern = Utils::simpleTemplate($pattern, $this->variables);
         if (!$pattern) {
             throw new RuntimeException('Bad storage folder pattern');
         }

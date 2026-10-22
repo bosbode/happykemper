@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\GPM
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,6 +12,7 @@ namespace Grav\Common\GPM;
 use DirectoryIterator;
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\Grav;
+use Grav\Common\Utils;
 use RuntimeException;
 use ZipArchive;
 use function count;
@@ -135,7 +136,10 @@ class Installer
         }
 
         if (!$options['sophisticated']) {
-            if ($options['theme']) {
+            $isTheme = $options['theme'] ?? false;
+            // Make sure that themes are always being copied, even if option was not set!
+            $isTheme = $isTheme || preg_match('|/themes/[^/]+|ui', $install_path);
+            if ($isTheme) {
                 self::copyInstall($extracted, $install_path);
             } else {
                 self::moveInstall($extracted, $install_path);
@@ -189,7 +193,7 @@ class Installer
 
             $package_folder_name = $zip->getNameIndex(0);
             if ($package_folder_name === false) {
-                throw new \RuntimeException('Bad package file: ' . basename($zip_file));
+                throw new \RuntimeException('Bad package file: ' . Utils::basename($zip_file));
             }
             $package_folder_name = preg_replace('#\./$#', '', $package_folder_name);
             $zip->close();
@@ -294,6 +298,12 @@ class Installer
      */
     public static function sophisticatedInstall($source_path, $install_path, $ignores = [], $keep_source = false)
     {
+        // Set maintenance mode flag and clear opcache before file operations
+        @file_put_contents(GRAV_ROOT . '/.upgrading', date('Y-m-d H:i:s'));
+        if (function_exists('opcache_reset')) {
+            @opcache_reset();
+        }
+
         foreach (new DirectoryIterator($source_path) as $file) {
             if ($file->isLink() || $file->isDot() || in_array($file->getFilename(), $ignores, true)) {
                 continue;
@@ -319,6 +329,13 @@ class Installer
                 @unlink($path);
                 @copy($file->getPathname(), $path);
             }
+        }
+
+        // Remove maintenance mode flag and clear opcache after file operations
+        @unlink(GRAV_ROOT . '/.upgrading');
+        clearstatcache(true);
+        if (function_exists('opcache_reset')) {
+            @opcache_reset();
         }
 
         return true;

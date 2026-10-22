@@ -1,4 +1,5 @@
 <?php
+
 namespace Grav\Plugin\Form;
 
 use Grav\Common\Page\Interfaces\PageInterface;
@@ -61,7 +62,7 @@ class Forms
      * @param array|null $form
      * @return FormInterface|null
      */
-    public function createPageForm(PageInterface $page, string $name = null, array $form = null): ?FormInterface
+    public function createPageForm(PageInterface $page, ?string $name = null, ?array $form = null): ?FormInterface
     {
         if (null === $form) {
             [$name, $form] = $this->getPageParameters($page, $name);
@@ -112,7 +113,7 @@ class Forms
      */
     protected function getPageParameters(PageInterface $page, ?string $name): array
     {
-        $forms = $page->forms();
+        $forms = $page->getForms();
 
         if ($name) {
             // If form with given name was found, use that.

@@ -1,9 +1,8 @@
 <?php namespace Clockwork\Support\Laravel\Console;
 
-use Symfony\Component\Console\Formatter\OutputFormatterInterface;
-use Symfony\Component\Console\Formatter\OutputFormatterStyleInterface;
+use Symfony\Component\Console\Formatter\{OutputFormatterInterface, OutputFormatterStyleInterface};
 
-// Formatter wrapping around a "real" formatter, capturing the formatted output
+// Formatter wrapping around a "real" formatter, capturing the formatted output (Symfony 7.x and later)
 class CapturingFormatter implements OutputFormatterInterface
 {
 	protected $formatter;
@@ -24,32 +23,32 @@ class CapturingFormatter implements OutputFormatterInterface
 		return $capturedOutput;
 	}
 
-	public function setDecorated($decorated)
+	public function setDecorated(bool $decorated): void
 	{
-		return $this->formatter->setDecorated($decorated);
+		$this->formatter->setDecorated($decorated);
 	}
 
-	public function isDecorated()
+	public function isDecorated(): bool
 	{
 		return $this->formatter->isDecorated();
 	}
 
-	public function setStyle($name, OutputFormatterStyleInterface $style)
+	public function setStyle(string $name, OutputFormatterStyleInterface $style): void
 	{
-		return $this->formatter->setStyle($name, $style);
+		$this->formatter->setStyle($name, $style);
 	}
 
-	public function hasStyle($name)
+	public function hasStyle(string $name): bool
 	{
 		return $this->formatter->hasStyle($name);
 	}
 
-	public function getStyle($name)
+	public function getStyle(string $name): OutputFormatterStyleInterface
 	{
 		return $this->formatter->getStyle($name);
 	}
 
-	public function format($message)
+	public function format(?string $message): ?string
 	{
 		$formatted = $this->formatter->format($message);
 

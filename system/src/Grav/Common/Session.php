@@ -3,15 +3,17 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common;
 
 use Grav\Common\Form\FormFlash;
+use Grav\Events\BeforeSessionStartEvent;
 use Grav\Events\SessionStartEvent;
 use Grav\Plugin\Form\Forms;
+use JsonException;
 use function is_string;
 
 /**
@@ -120,20 +122,20 @@ class Session extends \Grav\Framework\Session\Session
 
             // Make sure that Forms 3.0+ has been installed.
             if (null === $object && isset($grav['forms'])) {
-                user_error(
-                    __CLASS__ . '::' . __FUNCTION__ . '(\'files-upload\') is deprecated since Grav 1.6, use $form->getFlash()->getLegacyFiles() instead',
-                    E_USER_DEPRECATED
-                );
+//                user_error(
+//                    __CLASS__ . '::' . __FUNCTION__ . '(\'files-upload\') is deprecated since Grav 1.6, use $form->getFlash()->getLegacyFiles() instead',
+//                    E_USER_DEPRECATED
+//                );
 
                 /** @var Uri $uri */
                 $uri = $grav['uri'];
                 /** @var Forms|null $form */
-                $form = $grav['forms']->getActiveForm();
+                $form = $grav['forms']->getActiveForm(); // @phpstan-ignore-line (form plugin)
 
                 $sessionField = base64_encode($uri->url);
 
                 /** @var FormFlash|null $flash */
-                $flash = $form ? $form->getFlash() : null;
+                $flash = $form ? $form->getFlash() : null; // @phpstan-ignore-line (form plugin)
                 $object = $flash && method_exists($flash, 'getLegacyFiles') ? [$sessionField => $flash->getLegacyFiles()] : null;
             }
         }
@@ -148,10 +150,11 @@ class Session extends \Grav\Framework\Session\Session
      * @param mixed $object
      * @param int $time
      * @return $this
+     * @throws JsonException
      */
     public function setFlashCookieObject($name, $object, $time = 60)
     {
-        setcookie($name, json_encode($object), time() + $time, '/');
+        setcookie($name, json_encode($object, JSON_THROW_ON_ERROR), $this->getCookieOptions($time));
 
         return $this;
     }
@@ -161,16 +164,29 @@ class Session extends \Grav\Framework\Session\Session
      *
      * @param string $name
      * @return mixed|null
+     * @throws JsonException
      */
     public function getFlashCookieObject($name)
     {
         if (isset($_COOKIE[$name])) {
-            $object = json_decode($_COOKIE[$name], false);
-            setcookie($name, '', time() - 3600, '/');
-            return $object;
+            $cookie = $_COOKIE[$name];
+            setcookie($name, '', $this->getCookieOptions(-42000));
+
+            return json_decode($cookie, false, 512, JSON_THROW_ON_ERROR);
         }
 
         return null;
+    }
+
+    /**
+     * @return void
+     */
+    protected function onBeforeSessionStart(): void
+    {
+        $event = new BeforeSessionStartEvent($this);
+
+        $grav = Grav::instance();
+        $grav->dispatchEvent($event);
     }
 
     /**

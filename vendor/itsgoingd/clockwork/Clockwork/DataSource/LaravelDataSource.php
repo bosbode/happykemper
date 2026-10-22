@@ -2,8 +2,7 @@
 
 use Clockwork\DataSource\DataSource;
 use Clockwork\Helpers\Serializer;
-use Clockwork\Request\Log;
-use Clockwork\Request\Request;
+use Clockwork\Request\{Log, Request};
 
 use Illuminate\Contracts\Foundation\Application;
 use Symfony\Component\HttpFoundation\Response;
@@ -23,16 +22,20 @@ class LaravelDataSource extends DataSource
 	// Whether we should collect routes
 	protected $collectRoutes = false;
 
+	// Only collect routes from following list of namespaces (collect all if empty)
+	protected $routesOnlyNamespaces = [];
+
 	// Clockwork log instance
 	protected $log;
 
 	// Create a new data source, takes Laravel application instance and additional options as an arguments
-	public function __construct(Application $app, $collectLog = true, $collectRoutes = false)
+	public function __construct(Application $app, $collectLog = true, $collectRoutes = false, $routesOnlyNamespaces = true)
 	{
 		$this->app = $app;
 
-		$this->collectLog    = $collectLog;
-		$this->collectRoutes = $collectRoutes;
+		$this->collectLog           = $collectLog;
+		$this->collectRoutes        = $collectRoutes;
+		$this->routesOnlyNamespaces = $routesOnlyNamespaces;
 
 		$this->log = new Log;
 	}
@@ -61,6 +64,13 @@ class LaravelDataSource extends DataSource
 	public function reset()
 	{
 		$this->log = new Log;
+	}
+
+	// Set Laravel application instance for the current request
+	public function setApplication(Application $app)
+	{
+		$this->app = $app;
+		return $this;
 	}
 
 	// Set Laravel response instance for the current request
@@ -128,7 +138,7 @@ class LaravelDataSource extends DataSource
 	// Get the request URL
 	protected function getRequestUrl()
 	{
-		return $this->app['request']->url();
+		return $this->app['request']->fullUrl();
 	}
 
 	// Get the request URI
@@ -158,17 +168,22 @@ class LaravelDataSource extends DataSource
 	{
 		if (! $this->collectRoutes) return [];
 
-		return array_map(function ($route) {
+		return array_values(array_filter(array_map(function ($route) {
+			$action = $route->getActionName() ?: 'anonymous function';
+			$namespace = strpos($action, '\\') !== false ? explode('\\', $action)[0] : null;
+
+			if (count($this->routesOnlyNamespaces) && ! in_array($namespace, $this->routesOnlyNamespaces)) return;
+
 			return [
 				'method'     => implode(', ', $route->methods()),
 				'uri'        => $route->uri(),
 				'name'       => $route->getName(),
-				'action'     => $route->getActionName() ?: 'anonymous function',
+				'action'     => $action,
 				'middleware' => $route->middleware(),
 				'before'     => method_exists($route, 'beforeFilters') ? implode(', ', array_keys($route->beforeFilters())) : '',
 				'after'      => method_exists($route, 'afterFilters') ? implode(', ', array_keys($route->afterFilters())) : ''
 			];
-		}, $this->app['router']->getRoutes()->getRoutes());
+		}, $this->app['router']->getRoutes()->getRoutes())));
 	}
 
 	// Get the session data (normalized with removed passwords)
@@ -184,11 +199,24 @@ class LaravelDataSource extends DataSource
 	{
 		if (! isset($this->app['auth'])) return;
 		if (! ($user = $this->app['auth']->user())) return;
-		if (! isset($user->email) || ! isset($user->id)) return;
 
-		$request->setAuthenticatedUser($user->email, $user->id, [
-			'email' => $user->email,
-			'name'  => isset($user->name) ? $user->name : null
+		if ($user instanceof \Illuminate\Database\Eloquent\Model) {
+			// retrieve attributes in this awkward way to make sure we don't trigger exceptions with Eloquent strict mode on
+			$keyName = method_exists($user, 'getAuthIdentifierName') ? $user->getAuthIdentifierName() : $user->getKeyName();
+			$user = $user->getAttributes();
+
+			$userId = $user[$keyName] ?? null;
+			$userEmail = $user['email'] ?? $userId;
+			$userName = $user['name'] ?? null;
+		} else {
+			$userId = $user->getAuthIdentifier();
+			$userEmail = $user->email ?? $userId;
+			$userName = $user->name ?? null;
+		}
+
+		$request->setAuthenticatedUser($userEmail, $userId, [
+			'email' => $userEmail,
+			'name'  => $userName
 		]);
 	}
 }

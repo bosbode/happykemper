@@ -1,20 +1,19 @@
 # ![](https://avatars1.githubusercontent.com/u/8237355?v=2&s=50) Grav
 
 [![PHPStan](https://img.shields.io/badge/PHPStan-enabled-brightgreen.svg?style=flat)](https://github.com/phpstan/phpstan)
-[![SensioLabsInsight](https://insight.sensiolabs.com/projects/cfd20465-d0f8-4a0a-8444-467f5b5f16ad/mini.png)](https://insight.sensiolabs.com/projects/cfd20465-d0f8-4a0a-8444-467f5b5f16ad)
 [![Discord](https://img.shields.io/discord/501836936584101899.svg?logo=discord&colorB=728ADA&label=Discord%20Chat)](https://chat.getgrav.org)
- [![PHP Tests](https://github.com/getgrav/grav/workflows/PHP%20Tests/badge.svg?branch=develop)](https://github.com/getgrav/grav/actions?query=workflow%3A%22PHP+Tests%22) [![OpenCollective](https://opencollective.com/grav/backers/badge.svg)](#backers) [![OpenCollective](https://opencollective.com/grav/sponsors/badge.svg)](#sponsors)
+ [![PHP Tests](https://github.com/getgrav/grav/workflows/PHP%20Tests/badge.svg?branch=develop)](https://github.com/getgrav/grav/actions?query=workflow%3A%22PHP+Tests%22) [![OpenCollective](https://opencollective.com/grav/tiers/backers/badge.svg?label=Backers&color=brightgreen)](#backers) [![OpenCollective](https://opencollective.com/grav/tiers/supporters/badge.svg?label=Supporters&color=brightgreen)](#supporters) [![OpenCollective](https://opencollective.com/grav/tiers/sponsors/badge.svg?label=Sponsors&color=brightgreen)](#sponsors)
 
 Grav is a **Fast**, **Simple**, and **Flexible**, file-based Web-platform.  There is **Zero** installation required.  Just extract the ZIP archive, and you are already up and running.  It follows similar principles to other flat-file CMS platforms, but has a different design philosophy than most. Grav comes with a powerful **Package Management System** to allow for simple installation and upgrading of plugins and themes, as well as simple updating of Grav itself.
 
 The underlying architecture of Grav is designed to use well-established and _best-in-class_ technologies to ensure that Grav is simple to use and easy to extend. Some of these key technologies include:
 
-* [Twig Templating](https://twig.sensiolabs.org/): for powerful control of the user interface
+* [Twig Templating](https://twig.symfony.com/): for powerful control of the user interface
 * [Markdown](https://en.wikipedia.org/wiki/Markdown): for easy content creation
 * [YAML](https://yaml.org): for simple configuration
 * [Parsedown](https://parsedown.org/): for fast Markdown and Markdown Extra support
 * [Doctrine Cache](https://www.doctrine-project.org/projects/doctrine-orm/en/latest/reference/caching.html): layer for performance
-* [Pimple Dependency Injection Container](https://pimple.sensiolabs.org/): for extensibility and maintainability
+* [Pimple Dependency Injection Container](https://github.com/silexphp/Pimple): for extensibility and maintainability
 * [Symfony Event Dispatcher](https://symfony.com/doc/current/components/event_dispatcher/introduction.html): for plugin event handling
 * [Symfony Console](https://symfony.com/doc/current/components/console/introduction.html): for CLI interface
 * [Gregwar Image Library](https://github.com/Gregwar/Image): for dynamic image manipulation
@@ -40,22 +39,22 @@ You can download a **ready-built** package from the [Downloads page on https://g
 
 You can create a new project with the latest **stable** Grav release with the following command:
 
-```
-$ composer create-project getgrav/grav ~/webroot/grav
+```bash
+composer create-project getgrav/grav ~/webroot/grav
 ```
 
 ### From GitHub
 
 1. Clone the Grav repository from [https://github.com/getgrav/grav]() to a folder in the webroot of your server, e.g. `~/webroot/grav`. Launch a **terminal** or **console** and navigate to the webroot folder:
-   ```
-   $ cd ~/webroot
-   $ git clone https://github.com/getgrav/grav.git
+   ```bash
+   cd ~/webroot
+   git clone https://github.com/getgrav/grav.git
    ```
 
 2. Install the **plugin** and **theme dependencies** by using the [Grav CLI application](https://learn.getgrav.org/advanced/grav-cli) `bin/grav`:
-   ```
-   $ cd ~/webroot/grav
-   $ bin/grav install
+   ```bash
+   cd ~/webroot/grav
+   bin/grav install
    ```
 
 Check out the [install procedures](https://learn.getgrav.org/basics/installation) for more information.
@@ -64,28 +63,28 @@ Check out the [install procedures](https://learn.getgrav.org/basics/installation
 
 You can download [plugins](https://getgrav.org/downloads/plugins) or [themes](https://getgrav.org/downloads/themes) manually from the appropriate tab on the [Downloads page on https://getgrav.org](https://getgrav.org/downloads), but the preferred solution is to use the [Grav Package Manager](https://learn.getgrav.org/advanced/grav-gpm) or `GPM`:
 
-```
-$ bin/gpm index
+```bash
+bin/gpm index
 ```
 
 This will display all the available plugins and then you can install one or more with:
 
-```
-$ bin/gpm install <plugin/theme>
+```bash
+bin/gpm install <plugin/theme>
 ```
 
 # Updating
 
 To update Grav you should use the [Grav Package Manager](https://learn.getgrav.org/advanced/grav-gpm) or `GPM`:
 
-```
-$ bin/gpm selfupgrade
+```bash
+bin/gpm selfupgrade
 ```
 
 To update plugins and themes:
 
-```
-$ bin/gpm update
+```bash
+bin/gpm update
 ```
 
 ## Upgrading from older version
@@ -118,12 +117,19 @@ If you discover a possible security issue related to Grav or one of its plugins,
 * More [Awesome Grav Stuff](https://github.com/getgrav/awesome-grav)
 
 # Backers
-Support Grav with a monthly donation to help us continue development. [[Become a backer](https://opencollective.com/grav#backer)]
+Support Grav with a monthly donation to help us continue development. [[Become a backer](https://opencollective.com/grav/contribute)]
 
 <img src="https://opencollective.com/grav/tiers/backers.svg?avatarHeight=36&width=600" />
 
+
+# Supporters
+Support Grav with a monthly donation to help us continue development. [[Become a supporter](https://opencollective.com/grav/contribute)]
+
+<img src="https://opencollective.com/grav/tiers/supporters.svg?avatarHeight=36&width=600" />
+
+
 # Sponsors
-Become a sponsor and get your logo on our README on Github with a link to your site. [[Become a sponsor](https://opencollective.com/grav#sponsor)]
+Support Grav with a yearly donation to help us continue development. [[Become a sponsor](https://opencollective.com/grav/contribute)]
 
 <img src="https://opencollective.com/grav/tiers/sponsors.svg?avatarHeight=36&width=600" />
 

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Plugin\Login
  *
- * @copyright  Copyright (C) 2014 - 2020 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2014 - 2021 RocketTheme, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -16,7 +16,6 @@ use Grav\Common\Flex\Types\Users\UserObject;
 use Grav\Common\Grav;
 use Grav\Common\Language\Language;
 use Grav\Common\Page\Interfaces\PageInterface;
-use Grav\Common\Page\Page;
 use Grav\Common\Page\Pages;
 use Grav\Common\Plugin;
 use Grav\Common\Twig\Twig;
@@ -24,17 +23,28 @@ use Grav\Common\User\Interfaces\UserCollectionInterface;
 use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
 use Grav\Common\Uri;
+use Grav\Events\BeforeSessionStartEvent;
+use Grav\Events\PluginsLoadedEvent;
 use Grav\Events\SessionStartEvent;
 use Grav\Framework\Flex\Interfaces\FlexCollectionInterface;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
+use Grav\Framework\Form\Interfaces\FormInterface;
+use Grav\Framework\Psr7\Response;
 use Grav\Framework\Session\SessionInterface;
+use Grav\Plugin\Api\Exceptions\ForbiddenException;
 use Grav\Plugin\Form\Form;
+use Grav\Plugin\Login\Events\PageAuthorizeEvent;
 use Grav\Plugin\Login\Events\UserLoginEvent;
+use Grav\Plugin\Login\Invitations\Invitation;
+use Grav\Plugin\Login\Invitations\Invitations;
 use Grav\Plugin\Login\Login;
 use Grav\Plugin\Login\Controller;
+use Grav\Plugin\Login\Email;
 use Grav\Plugin\Login\RememberMe\RememberMe;
 use RocketTheme\Toolbox\Event\Event;
 use RocketTheme\Toolbox\Session\Message;
+use Twig\TwigFunction;
+use function is_array;
 
 /**
  * Class LoginPlugin
@@ -43,9 +53,6 @@ use RocketTheme\Toolbox\Session\Message;
 class LoginPlugin extends Plugin
 {
     const TMP_COOKIE_NAME = 'tmp-message';
-
-    /** @var string */
-    protected $route;
 
     /** @var bool */
     protected $authenticated = true;
@@ -56,75 +63,160 @@ class LoginPlugin extends Plugin
     /** @var bool */
     protected $redirect_to_login;
 
+    /** @var Invitation|null */
+    protected $invitation;
+
+    protected $temp_redirect;
+    protected $temp_messages;
+    /** @var string|null The page to return to after login, kept until a waiting session starts (system.session.lazy). */
+    protected $lazy_redirect;
+    /** @var UserInterface|null The guest user, kept until a waiting session starts (system.session.lazy). */
+    protected $lazy_user;
+
     /**
      * @return array
      */
-    public static function getSubscribedEvents()
+    public static function getSubscribedEvents(): array
     {
         return [
+            PluginsLoadedEvent::class   => [['onPluginsLoaded', 10]],
             SessionStartEvent::class    => ['onSessionStart', 0],
-            'onPluginsInitialized'      => [['autoload', 100000], ['initializeSession', 10000], ['initializeLogin', 1000]],
+            BeforeSessionStartEvent::class => ['onBeforeSessionStart', 0],
+            PageAuthorizeEvent::class   => ['onPageAuthorizeEvent', -10000],
+            'onPluginsInitialized'      => [['initializeSession', 10000], ['initializeLogin', 1000]],
             'onTask.login.login'        => ['loginController', 0],
             'onTask.login.twofa'        => ['loginController', 0],
             'onTask.login.twofa_cancel' => ['loginController', 0],
             'onTask.login.forgot'       => ['loginController', 0],
+            'onTask.login.magicRequest' => ['loginController', 0],
             'onTask.login.logout'       => ['loginController', 0],
             'onTask.login.reset'        => ['loginController', 0],
             'onTask.login.regenerate2FASecret' => ['loginController', 0],
+            'onTask.login.resendEmailChange' => ['loginController', 0],
+            'onTask.login.cancelEmailChange' => ['loginController', 0],
+            'onPageTask.login.invite'    => ['loginController', 0],
             'onPagesInitialized'        => ['storeReferrerPage', 0],
-            'onPageInitialized'         => ['authorizePage', 0],
+            'onDisplayErrorPage.401'    => ['onDisplayErrorPage401', -1],
+            'onDisplayErrorPage.403'    => ['onDisplayErrorPage403', -1],
+            'onPageInitialized'         => [['authorizeLoginPage', 10], ['authorizePage', 0]],
             'onPageFallBackUrl'         => ['authorizeFallBackUrl', 0],
+            'onTwigInitialized'         => ['onTwigInitialized', 0],
+            'onBuildTwigSandboxPolicy'  => ['onBuildTwigSandboxPolicy', 0],
+            'onShortcodeHandlers'       => ['onShortcodeHandlers', 0],
             'onTwigTemplatePaths'       => ['onTwigTemplatePaths', 0],
             'onTwigSiteVariables'       => ['onTwigSiteVariables', -100000],
+            'onAdminTwigTemplatePaths'  => ['onAdminUntrustedHostNotice', 0],
+            'onApiDashboardNotifications' => ['onApiDashboardNotifications', 0],
+            'onApiUserListColumns'      => ['onApiUserListColumns', 0],
+            'onApiUserListColumnData'   => ['onApiUserListColumnData', 0],
+            'onApiUserListRowActions'   => ['onApiUserListRowActions', 0],
+            'onApiUserListRowAction'    => ['onApiUserListRowAction', 0],
             'onFormProcessed'           => ['onFormProcessed', 0],
-            'onUserLoginAuthenticate'   => [['userLoginAuthenticateRateLimit', 10003], ['userLoginAuthenticateByRegistration', 10002], ['userLoginAuthenticateByRememberMe', 10001], ['userLoginAuthenticateByEmail', 10000], ['userLoginAuthenticate', 0]],
+            'onUserLoginAuthenticate'   => [['userLoginAuthenticateByMagic', 10004], ['userLoginAuthenticateRateLimit', 10003], ['userLoginAuthenticateByRegistration', 10002], ['userLoginAuthenticateByRememberMe', 10001], ['userLoginAuthenticateByEmail', 10000], ['userLoginAuthenticate', 0]],
             'onUserLoginAuthorize'      => ['userLoginAuthorize', 0],
             'onUserLoginFailure'        => ['userLoginGuest', 0],
             'onUserLoginGuest'          => ['userLoginGuest', 0],
-            'onUserLogin'               => [['userLoginResetRateLimit', 1000], ['userLogin', 0]],
+            'onUserLogin'               => [['userLoginResetRateLimit', 1000], ['userLogin', 10]],
+            'onUserLoginAuthorized'     => ['userLoginAuthorized', 0],
             'onUserLogout'              => ['userLogout', 0],
         ];
     }
 
     /**
-     * [onPluginsInitialized:100000] Composer autoload.
+     * Composer autoload.
      *
      * @return ClassLoader
      */
-    public function autoload() : ClassLoader
+    public function autoload(): ClassLoader
     {
         return require __DIR__ . '/vendor/autoload.php';
     }
 
+    /**
+     * [onPluginsLoaded:10] Initialize login service.
+     * @throws \RuntimeException
+     */
+    public function onPluginsLoaded(): void
+    {
+        // Check to ensure sessions are enabled.
+        if (!$this->config->get('system.session.enabled') && !\constant('GRAV_CLI')) {
+            throw new \RuntimeException('The Login plugin requires "system.session" to be enabled');
+        }
 
-    public function onSessionStart(SessionStartEvent $event)
+        // Define login service.
+        $this->grav['login'] = static function (Grav $c) {
+            return new Login($c);
+        };
+    }
+
+    /**
+     * @param BeforeSessionStartEvent $event
+     * @return void
+     */
+    public function onBeforeSessionStart(BeforeSessionStartEvent $event): void
     {
         $session = $event->session;
+        $this->temp_redirect = $session->redirect_after_login ?? null;
+        $this->temp_messages = $session->messages;
+    }
+
+
+    /**
+     * @param SessionStartEvent $event
+     * @return void
+     */
+    public function onSessionStart(SessionStartEvent $event): void
+    {
+        $session = $event->session;
+
+        if (isset($this->temp_redirect)) {
+            $session->redirect_after_login = $this->temp_redirect;
+            unset($this->temp_redirect);
+        }
+        if (isset($this->temp_messages)) {
+            $session->messages = $this->temp_messages;
+            unset($this->temp_messages);
+        }
+        // What this request would have stored while the session was still waiting to start.
+        if (isset($this->lazy_user)) {
+            if (empty($session->user)) {
+                $session->user = $this->lazy_user;
+            }
+            unset($this->lazy_user);
+        }
+        if (isset($this->lazy_redirect)) {
+            if (empty($session->redirect_after_login)) {
+                $session->redirect_after_login = $this->lazy_redirect;
+            }
+            unset($this->lazy_redirect);
+        }
 
         $user = $session->user ?? null;
         if ($user && $user->exists() && ($this->config()['session_user_sync'] ?? false)) {
             // User is stored into the filesystem.
-
-            /** @var UserCollectionInterface $accounts */
-            $accounts = $this->grav['accounts'];
-
-            /** @var UserObject $stored */
-            if ($accounts instanceof FlexCollectionInterface) {
-                $stored = $accounts[$user->username];
-                if (is_callable([$stored, 'refresh'])) {
-                    $stored->refresh();
-                }
+            if ($user instanceof FlexObjectInterface && version_compare(GRAV_VERSION, '1.7.13', '>=')) {
+                $user->refresh(true);
             } else {
                 // TODO: remove when removing legacy support.
-                $stored = $accounts->load($user->username);
-            }
+                /** @var UserCollectionInterface $accounts */
+                $accounts = $this->grav['accounts'];
+                if ($accounts instanceof FlexCollectionInterface) {
+                    /** @var UserObject $stored */
+                    $stored = $accounts[$user->username];
+                    if (is_callable([$stored, 'refresh'])) {
+                        $stored->refresh(true);
+                    }
+                } else {
+                    $stored = $accounts->load($user->username);
+                }
 
-            if ($stored && $stored->exists()) {
-                // User still exists, update user object in the session.
-                $user->update($stored->jsonSerialize());
-            } else {
-                // User doesn't exist anymore, prepare for session invalidation.
-                $user->state = 'disabled';
+                if ($stored && $stored->exists()) {
+                    // User still exists, update user object in the session.
+                    $user->update($stored->jsonSerialize());
+                } else {
+                    // User doesn't exist anymore, prepare for session invalidation.
+                    $user->state = 'disabled';
+                }
             }
 
             if ($user->state !== 'enabled') {
@@ -136,34 +228,57 @@ class LoginPlugin extends Plugin
                 $messages->add($this->grav['language']->translate('PLUGIN_LOGIN.USER_ACCOUNT_DISABLED'), 'error');
             }
         }
+
+        // Whatever session_user_sync says, the session's copy of the account must
+        // not carry stale email fields into a later save. A change confirmed in
+        // another browser only reached the stored account, and saving the old copy
+        // (a profile save, a 2FA secret, another plugin) would put the old address
+        // and the used confirmation token back. Only these fields are touched, so
+        // the sign-in and 2FA state stay as they are.
+        $user = $session->user ?? null;
+        if ($user && $user->exists()) {
+            $this->getLoginInstance()->refreshEmailFields($user);
+        }
     }
 
     /**
      * [onPluginsInitialized:10000] Initialize login plugin if path matches.
      * @throws \RuntimeException
      */
-    public function initializeSession()
+    public function initializeSession(): void
     {
         // Check to ensure sessions are enabled.
         if (!$this->config->get('system.session.enabled')) {
             throw new \RuntimeException('The Login plugin requires "system.session" to be enabled');
         }
 
-        // Define login service.
-        $this->grav['login'] = static function (Grav $c) {
-            return new Login($c);
-        };
-
         // Define current user service.
-        $this->grav['user'] = static function (Grav $c) {
+        $plugin = $this;
+        $this->grav['user'] = static function (Grav $c) use ($plugin) {
             $session = $c['session'];
 
             if (empty($session->user)) {
                 // Try remember me login.
-                $session->user = $c['login']->login(
+                $user = $c['login']->login(
                     ['username' => ''],
-                    ['remember_me' => true, 'remember_me_login' => true, 'failureEvent' => 'onUserLoginGuest']
+                    [
+                        'remember_me' => true,
+                        'remember_me_login' => true,
+                        'twofa' => $c['config']->get('plugins.login.twofa_enabled', false),
+                        'failureEvent' => 'onUserLoginGuest'
+                    ]
                 );
+
+                // A guest has nothing worth keeping, and storing one would start a session
+                // that is waiting for its first write (system.session.lazy). The same guest is
+                // stored if the session starts later in this request.
+                if (!$user->authenticated && self::isSessionWaiting($session)) {
+                    $plugin->lazy_user = $user;
+
+                    return $user;
+                }
+
+                $session->user = $user;
             }
 
             return $session->user;
@@ -174,69 +289,70 @@ class LoginPlugin extends Plugin
      * [onPluginsInitialized:1000] Initialize login plugin if path matches.
      * @throws \RuntimeException
      */
-    public function initializeLogin()
+    public function initializeLogin(): void
     {
         $this->login = $this->grav['login'];
 
-        /** @var Uri $uri */
-        $uri = $this->grav['uri'];
-
         // Admin has its own login; make sure we're not in admin.
-        if (!isset($this->grav['admin'])) {
-            $this->route = $this->config->get('plugins.login.route');
-            $this->enable([
-                'onPagesInitialized' => ['pageVisibility', 0],
-            ]);
+        if ($this->isAdmin()) {
+            return;
         }
 
+        $this->enable([
+            'onPagesInitialized' => ['pageVisibility', 0],
+        ]);
+
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
         $path = $uri->path();
         $this->redirect_to_login = $this->config->get('plugins.login.redirect_to_login');
 
         // Register route to login page if it has been set.
-        if ($this->route && $this->route === $path) {
+        if ($path === $this->login->getRoute('login')) {
             $this->enable([
                 'onPagesInitialized' => ['addLoginPage', 0],
             ]);
-            return;
-        }
-
-        if ($path === $this->config->get('plugins.login.route_forgot')) {
+        } elseif ($path === $this->login->getRoute('forgot')) {
             $this->enable([
                 'onPagesInitialized' => ['addForgotPage', 0],
             ]);
-            return;
-        }
-
-        if ($path === $this->config->get('plugins.login.route_reset')) {
+        } elseif ($path === $this->login->getRoute('magic')) {
+            // If route_magic and route_magic_login are the same, dispatch by token presence.
+            $magicLoginRoute = $this->login->getRoute('magic_login');
+            if ($magicLoginRoute === $path) {
+                $uri = $this->grav['uri'];
+                if ($uri->param('token') !== false && $uri->param('username') !== false) {
+                    $this->enable(['onPagesInitialized' => ['handleMagicLogin', 0]]);
+                } else {
+                    $this->enable(['onPagesInitialized' => ['addMagicPage', 0]]);
+                }
+            } else {
+                $this->enable(['onPagesInitialized' => ['addMagicPage', 0]]);
+            }
+        } elseif ($path === $this->login->getRoute('reset')) {
             $this->enable([
                 'onPagesInitialized' => ['addResetPage', 0],
             ]);
-            return;
-        }
-
-        if ($path === $this->config->get('plugins.login.route_register')) {
-            if ($this->config->get('plugins.login.user_registration.enabled')) {
-                $this->enable([
-                    'onPagesInitialized' => ['addRegisterPage', 0],
-                ]);
-            } else {
-                throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.REGISTRATION_DISABLED'), 404);
-            }
-            return;
-        }
-
-        if ($path === $this->config->get('plugins.login.route_activate')) {
+        } elseif ($path === $this->login->getRoute('magic_login')) {
+            $this->enable([
+                'onPagesInitialized' => ['handleMagicLogin', 0],
+            ]);
+        } elseif ($path === $this->login->getRoute('register', true)) {
+            $this->enable([
+                'onPagesInitialized' => ['addRegisterPage', 0],
+            ]);
+        } elseif ($path === $this->login->getRoute('activate')) {
             $this->enable([
                 'onPagesInitialized' => ['handleUserActivation', 0],
             ]);
-            return;
-        }
-
-        if ($path === $this->config->get('plugins.login.route_profile')) {
+        } elseif ($path === $this->login->getRoute('confirm_email')) {
+            $this->enable([
+                'onPagesInitialized' => ['handleEmailChangeConfirmation', 0],
+            ]);
+        } elseif ($path === $this->login->getRoute('profile')) {
             $this->enable([
                 'onPagesInitialized' => ['addProfilePage', 0],
             ]);
-            return;
         }
     }
 
@@ -246,25 +362,29 @@ class LoginPlugin extends Plugin
      *
      * Note that this setting may be slow on large sites as it loads all pages into memory for each page load!
      *
-     * @param Event $e
+     * @param Event $event
      */
-    public function pageVisibility(Event $e)
+    public function pageVisibility(Event $event): void
     {
-        if ($this->config->get('plugins.login.dynamic_page_visibility')) {
-            /** @var Pages $pages */
-            $pages = $e['pages'];
-            $user = $this->grav['user'];
+        if (!$this->config->get('plugins.login.dynamic_page_visibility')) {
+            return;
+        }
 
-            // TODO: This is super slow especially with Flex Pages. Better solution is required (on indexing / on load?).
-            foreach ($pages->instances() as $page) {
-                if ($page) {
-                    $header = $page->header();
-                    if ($header && isset($header->access) && isset($header->login['visibility_requires_access']) && $header->login['visibility_requires_access'] === true) {
-                        $config = $this->mergeConfig($page);
-                        $access = $this->login->isUserAuthorizedForPage($user, $page, $config);
-                        if ($access === false) {
-                            $page->visible(false);
-                        }
+        /** @var Pages $pages */
+        $pages = $event['pages'];
+        /** @var UserInterface|null $user */
+        $user = $this->grav['user'] ?? null;
+
+        // TODO: This is super slow especially with Flex Pages. Better solution is required (on indexing / on load?).
+        foreach ($pages->instances() as $page) {
+            if ($page && $page->visible()) {
+                $header = $page->header();
+                $require_access = $header->login['visibility_requires_access'] ?? false;
+                if ($require_access === true && isset($header->access)) {
+                    $config = $this->mergeConfig($page);
+                    $access = $this->login->isUserAuthorizedForPage($user, $page, $config);
+                    if ($access === false) {
+                        $page->visible(false);
                     }
                 }
             }
@@ -274,35 +394,35 @@ class LoginPlugin extends Plugin
     /**
      * [onPagesInitialized]
      */
-    public function storeReferrerPage()
+    public function storeReferrerPage(): void
     {
         $invalid_redirect_routes = [
-            $this->config->get('plugins.login.route') ?: '/login',
-            $this->config->get('plugins.login.route_register') ?: '/register',
-            $this->config->get('plugins.login.route_activate') ?: '/activate_user',
-            $this->config->get('plugins.login.route_forgot') ?: '/forgot_password',
-            $this->config->get('plugins.login.route_reset') ?: '/reset_password',
+            $this->login->getRoute('login') ?: '/login',
+            $this->login->getRoute('register', true) ?: '/register',
+            $this->login->getRoute('activate') ?: '/activate_user',
+            $this->login->getRoute('confirm_email') ?: '/confirm_email',
+            $this->login->getRoute('forgot') ?: '/forgot_password',
+            $this->login->getRoute('reset') ?: '/reset_password',
+            $this->login->getRoute('magic') ?: '/magic_login',
+            $this->login->getRoute('magic_login') ?: '/magic_link',
         ];
 
         /** @var Uri $uri */
         $uri = $this->grav['uri'];
         $current_route = $uri->route();
 
-        $redirect = static::defaultRedirectAfterLogin();
-
+        $redirect = $this->login->getRoute('after_login');
         if (!$redirect && !in_array($current_route, $invalid_redirect_routes, true)) {
             // No login redirect set in the configuration; can we redirect to the current page?
-            $allowed = true;
 
-            /** @var PageInterface $page */
-            $page = $this->grav['pages']->dispatch($current_route);
+            /** @var Pages $pages */
+            $pages = $this->grav['pages'];
 
+            $page = $pages->find($current_route);
             if ($page) {
                 $header = $page->header();
-                if (isset($header->login_redirect_here) && $header->login_redirect_here === false) {
-                    $allowed = false;
-                }
 
+                $allowed = ($header->login_redirect_here ?? true) === true;
                 if ($allowed && $page->routable()) {
                     $redirect = $page->route();
                     foreach ($uri->params(null, true) as $key => $value) {
@@ -316,130 +436,173 @@ class LoginPlugin extends Plugin
             $redirect = $this->grav['session']->redirect_after_login;
         }
 
+        // A session waiting for its first write (system.session.lazy): keep the page in memory
+        // and store it only if the session starts, so an ordinary page view sets no cookie.
+        if (self::isSessionWaiting($this->grav['session'])) {
+            if (!$redirect && !$this->login->getRoute('after_login') && in_array($current_route, $invalid_redirect_routes, true)) {
+                // Nothing was stored on the way here, so on the login page the page to go back
+                // to is the one the visitor came from.
+                $redirect = $this->referrerRedirect($invalid_redirect_routes);
+            }
+            $this->lazy_redirect = $redirect ?: null;
+
+            return;
+        }
+
         $this->grav['session']->redirect_after_login = $redirect;
     }
 
     /**
-     * Add Login page
-     * @throws \Exception
+     * The page named by the Referer header, when it is a page of this site that a visitor
+     * may be sent back to after login.
+     *
+     * @param string[] $invalid_redirect_routes
+     * @return string|null
      */
-    public function addLoginPage()
+    protected function referrerRedirect(array $invalid_redirect_routes): ?string
     {
+        $referrer = $_SERVER['HTTP_REFERER'] ?? '';
+        if (!is_string($referrer) || $referrer === '') {
+            return null;
+        }
+
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+        // The route relative to this site, without a language prefix. A referrer from another
+        // site gives the current route, which is one of the invalid routes.
+        // Not parse_url(): it rejects a path with a Grav param in it (`/blog/page:2`).
+        $path = explode('#', explode('?', (string)$uri->referrer(null, null, true), 2)[0], 2)[0];
+
+        $sep = (string)$this->config->get('system.param_sep', ':');
+        $route = '';
+        $params = '';
+        foreach (explode('/', $path) as $part) {
+            if ($part === '') {
+                continue;
+            }
+            if ($sep !== '' && str_contains($part, $sep)) {
+                $key = rawurldecode(explode($sep, $part, 2)[0]);
+                if (!in_array($key, ['task', 'nonce', 'login-nonce', 'logout-nonce'], true)) {
+                    $params .= '/' . $part;
+                }
+            } elseif ($params === '') {
+                $route .= '/' . rawurldecode($part);
+            }
+        }
+        $route = $route ?: '/';
+
+        if (in_array($route, $invalid_redirect_routes, true)) {
+            return null;
+        }
+
         /** @var Pages $pages */
         $pages = $this->grav['pages'];
-        $page = $pages->dispatch($this->route);
-
-        if (!$page) {
-            // Only add login page if it hasn't already been defined.
-            $page = new Page();
-            $page->init(new \SplFileInfo(__DIR__ . '/pages/login.md'));
-            $page->slug(basename($this->route));
-
-            $pages->addPage($page, $this->route);
+        $page = $pages->find($route);
+        if (!$page || !$page->routable() || ($page->header()->login_redirect_here ?? true) !== true) {
+            return null;
         }
 
-        // Login page may not have the correct Cache-Control header set, force no-store for the proxies.
-        $cacheControl = $page->cacheControl();
-        if (!$cacheControl) {
-            $page->cacheControl('private, no-cache, must-revalidate');
-        }
+        $redirect = $page->route();
+
+        return in_array($redirect, $invalid_redirect_routes, true) ? null : $redirect . $params;
+    }
+
+    /**
+     * True while the session waits for its first write to start (system.session.lazy,
+     * Grav 2.2+). Always false on older cores and with lazy sessions off.
+     *
+     * @param mixed $session
+     * @return bool
+     */
+    protected static function isSessionWaiting($session): bool
+    {
+        return is_object($session) && method_exists($session, 'isPending') && $session->isPending();
     }
 
     /**
      * Add Login page
-     * @throws \Exception
      */
-    public function addForgotPage()
+    public function addLoginPage(): void
     {
-        $route = $this->config->get('plugins.login.route_forgot');
-        /** @var Pages $pages */
-        $pages = $this->grav['pages'];
-        $page = $pages->dispatch($route);
+        $this->login->addPage('login');
+    }
 
-        if (!$page) {
-            // Only add forgot page if it hasn't already been defined.
-            $page = new Page();
-            $page->init(new \SplFileInfo(__DIR__ . '/pages/forgot.md'));
-            $page->slug(basename($route));
+    /**
+     * Add Login page
+     */
+    public function addForgotPage(): void
+    {
+        $this->login->addPage('forgot');
+    }
 
-            $pages->addPage($page, $route);
+    /**
+     * Add Magic Link request page.
+     */
+    public function addMagicPage(): void
+    {
+        if (!$this->config->get('plugins.login.magic_link.enabled', false)) {
+            $loginRoute = $this->login->getRoute('login') ?: '/login';
+            $this->grav->redirectLangSafe($loginRoute);
+            return;
         }
 
-        // Forgot page may not have the correct Cache-Control header set, force no-store for the proxies.
-        $cacheControl = $page->cacheControl();
-        if (!$cacheControl) {
-            $page->cacheControl('private, no-cache, must-revalidate');
-        }
+        $this->login->addPage('magic');
     }
 
     /**
      * Add Reset page
-     * @throws \Exception
      */
-    public function addResetPage()
+    public function addResetPage(): void
     {
-        $route = $this->config->get('plugins.login.route_reset');
-
+        /** @var Uri $uri */
         $uri = $this->grav['uri'];
+
         $token = $uri->param('token');
         $user = $uri->param('user');
-
         if (!$user || !$token) {
             return;
         }
 
-        /** @var Pages $pages */
-        $pages = $this->grav['pages'];
-        $page = $pages->dispatch($route);
-
-        if (!$page) {
-            // Only add login page if it hasn't already been defined.
-            $page = new Page();
-            $page->init(new \SplFileInfo(__DIR__ . '/pages/reset.md'));
-            $page->slug(basename($route));
-
-            $pages->addPage($page, $route);
-        }
-
-        // Reset page may not have the correct Cache-Control header set, force no-store for the proxies.
-        $cacheControl = $page->cacheControl();
-        if (!$cacheControl) {
-            $page->cacheControl('private, no-cache, must-revalidate');
-        }
+        $this->login->addPage('reset');
     }
 
     /**
      * Add Register page
-     * @throws \Exception
      */
-    public function addRegisterPage()
+    public function addRegisterPage(): void
     {
-        $route = $this->config->get('plugins.login.route_register');
+        $this->login->addPage('register');
+    }
 
-        /** @var Pages $pages */
-        $pages = $this->grav['pages'];
-        $page = $pages->dispatch($route);
+    /**
+     * Add Profile page
+     */
+    public function addProfilePage(): void
+    {
+        // An email change confirmed in another browser only reached the stored
+        // account, so show the profile from that.
+        $this->login->refreshEmailFields($this->grav['user']);
+        $this->login->addPage('profile');
+        $this->storeReferrerPage();
+    }
 
-        if (!$page) {
-            $page = new Page();
-            $page->init(new \SplFileInfo(__DIR__ . '/pages/register.md'));
-            $page->slug(basename($route));
 
-            $pages->addPage($page, $route);
-        }
+    /**
+     * Set Unauthorized page
+     */
+    public function setUnauthorizedPage(): void
+    {
+        $page = $this->login->addPage('unauthorized');
 
-        // Register page may not have the correct Cache-Control header set, force no-store for the proxies.
-        $cacheControl = $page->cacheControl();
-        if (!$cacheControl) {
-            $page->cacheControl('private, no-cache, must-revalidate');
-        }
+        unset($this->grav['page']);
+        $this->grav['page'] = $page;
     }
 
     /**
      * Handle user activation
      * @throws \RuntimeException
      */
-    public function handleUserActivation()
+    public function handleUserActivation(): void
     {
         /** @var Uri $uri */
         $uri = $this->grav['uri'];
@@ -455,11 +618,25 @@ class LoginPlugin extends Plugin
         $token = $uri->param('token');
         $user = $users->load($username);
         if (is_callable([$user, 'refresh'])) {
-            $user->refresh();
+            $user->refresh(true);
         }
 
         $redirect_route = $this->config->get('plugins.login.user_registration.redirect_after_activation');
         $redirect_code = null;
+
+        // Activation is the second unauthenticated endpoint that compares a
+        // secret token, so it gets the same treatment as password reset:
+        // a counter on failed attempts (GHSA-x239-6jqx-5hjh).
+        $rateLimiter = $this->login->getRateLimiter('token_attempts');
+        $userKey = (string)$username;
+
+        if ($rateLimiter->isRateLimited($userKey)) {
+            $message = $this->grav['language']->translate('PLUGIN_LOGIN.INVALID_REQUEST');
+            $messages->add($message, 'error');
+            $this->grav->redirectLangSafe($redirect_route ?: '/', $redirect_code);
+
+            return;
+        }
 
         if (empty($user->activation_token)) {
             $message = $this->grav['language']->translate('PLUGIN_LOGIN.INVALID_REQUEST');
@@ -467,7 +644,9 @@ class LoginPlugin extends Plugin
         } else {
             [$good_token, $expire] = explode('::', $user->activation_token, 2);
 
-            if ($good_token === $token) {
+            // Constant-time: a plain === leaks how many leading characters
+            // of the token were right through its early exit.
+            if (hash_equals($good_token, (string)$token)) {
                 if (time() > $expire) {
                     $message = $this->grav['language']->translate('PLUGIN_LOGIN.ACTIVATION_LINK_EXPIRED');
                     $messages->add($message, 'error');
@@ -480,7 +659,21 @@ class LoginPlugin extends Plugin
                     }
 
                     $messages->add($message, 'info');
-                    unset($user->activation_token);
+
+                    // Opening the link proves the address it was mailed to, the
+                    // same as confirming an email change does. If the account's
+                    // address changed after the link went out (an administrator
+                    // edited it), or the token has no address on record because
+                    // it was issued before that was kept, the account is still
+                    // activated but the current address is left unproven.
+                    $mailedTo = trim((string)$user->get('activation_email', ''));
+                    $currentEmail = trim((string)$user->get('email', ''));
+                    $addressProven = $mailedTo !== '' && mb_strtolower($mailedTo) === mb_strtolower($currentEmail);
+
+                    unset($user->activation_token, $user->activation_email);
+                    if ($addressProven) {
+                        $this->login->markEmailVerified($user);
+                    }
                     $user->save();
 
                     if ($this->config->get('plugins.login.user_registration.options.send_welcome_email', false)) {
@@ -507,6 +700,8 @@ class LoginPlugin extends Plugin
                     $this->grav->fireEvent('onUserActivated', new Event(['user' => $user]));
                 }
             } else {
+                $rateLimiter->registerRateLimitedAction($userKey);
+
                 $message = $this->grav['language']->translate('PLUGIN_LOGIN.INVALID_REQUEST');
                 $messages->add($message, 'error');
             }
@@ -516,67 +711,225 @@ class LoginPlugin extends Plugin
     }
 
     /**
-     * Add Profile page
+     * Handle the link that confirms a changed email address.
+     *
+     * Works whether or not the visitor is signed in, since the token is the
+     * proof. Only here does the account's `email` change.
      */
-    public function addProfilePage()
+    public function handleEmailChangeConfirmation(): void
     {
-        $route = $this->config->get('plugins.login.route_profile');
-        /** @var Pages $pages */
-        $pages = $this->grav['pages'];
-        $page = $pages->dispatch($route);
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
 
-        if (!$page) {
-            // Only add forgot page if it hasn't already been defined.
-            $page = new Page();
-            $page->init(new \SplFileInfo(__DIR__ . '/pages/profile.md'));
-            $page->slug(basename($route));
+        /** @var Message $messages */
+        $messages = $this->grav['messages'];
 
-            $pages->addPage($page, $route);
+        $language = $this->grav['language'];
+
+        /** @var UserCollectionInterface $users */
+        $users = $this->grav['accounts'];
+
+        $username = (string)$uri->param('username');
+        $token = (string)$uri->param('token');
+
+        /** @var UserInterface $current */
+        $current = $this->grav['user'];
+        $signedInAsOwner = $username !== '' && $current->exists() && $current->authorized === true && $current->username === $username;
+        $redirect_route = $signedInAsOwner ? $this->login->getRoute('profile') : $this->login->getRoute('login');
+        $redirect_route = $redirect_route ?: '/';
+
+        // Same throttle as activation: an unauthenticated endpoint that
+        // compares a secret token (GHSA-x239-6jqx-5hjh).
+        $rateLimiter = $this->login->getRateLimiter('token_attempts');
+        if ($username === '' || $rateLimiter->isRateLimited($username)) {
+            $messages->add($language->translate('PLUGIN_LOGIN.INVALID_REQUEST'), 'error');
+            $this->grav->redirectLangSafe($redirect_route);
+
+            return;
         }
 
-        // Profile page may not have the correct Cache-Control header set, force no-store for the proxies.
-        $cacheControl = $page->cacheControl();
-        if (!$cacheControl) {
-            $page->cacheControl('private, no-cache, must-revalidate');
+        $user = $users->load($username);
+        if (is_callable([$user, 'refresh'])) {
+            $user->refresh(true);
         }
 
-        $this->storeReferrerPage();
+        $stored = (string)$user->get('email_change_token', '');
+        $newEmail = (string)$user->get('email_pending', '');
+
+        if (!$user->exists() || $newEmail === '' || !str_contains($stored, '::')) {
+            // Already used, cancelled or never there.
+            $messages->add($language->translate('PLUGIN_LOGIN.EMAIL_CHANGE_LINK_INVALID'), 'error');
+            $this->grav->redirectLangSafe($redirect_route);
+
+            return;
+        }
+
+        [$good_token, $expire] = explode('::', $stored, 2);
+
+        if (!hash_equals($good_token, $token)) {
+            // An older link replaced by a newer request lands here too.
+            $rateLimiter->registerRateLimitedAction($username);
+            $messages->add($language->translate('PLUGIN_LOGIN.EMAIL_CHANGE_LINK_INVALID'), 'error');
+            $this->grav->redirectLangSafe($redirect_route);
+
+            return;
+        }
+
+        if (time() > (int)$expire) {
+            // Keep the waiting change so the profile can send a fresh link.
+            $messages->add($language->translate('PLUGIN_LOGIN.EMAIL_CHANGE_LINK_EXPIRED'), 'error');
+            $this->grav->redirectLangSafe($redirect_route);
+
+            return;
+        }
+
+        // Someone may have taken the address since the link was sent.
+        if ($this->login->emailBelongsToAnother($user, $newEmail)) {
+            $this->login->clearEmailChange($user);
+            $user->save();
+            $messages->add($language->translate(['PLUGIN_LOGIN.EMAIL_NOT_AVAILABLE', htmlspecialchars($newEmail, ENT_QUOTES, 'UTF-8')]), 'error');
+            $this->grav->redirectLangSafe($redirect_route);
+
+            return;
+        }
+
+        $oldEmail = (string)$user->get('email', '');
+
+        $user->email = $newEmail;
+        $this->login->clearEmailChange($user);
+        $this->login->markEmailVerified($user);
+        $user->save();
+
+        // The session keeps its own copy of the account; bring it up to date
+        // so the profile page shows the new address straight away.
+        if ($current->exists() && $current !== $user && $current->username === $username) {
+            $current->email = $newEmail;
+            $this->login->clearEmailChange($current);
+            $current->email_verified = $user->get('email_verified');
+            $current->email_verified_at = $user->get('email_verified_at');
+        }
+
+        $this->login->sendEmailChangedNotice($user, $oldEmail);
+
+        $this->grav->fireEvent('onUserEmailChanged', new Event([
+            'user' => $user,
+            'old_email' => $oldEmail,
+            'new_email' => $newEmail,
+        ]));
+
+        $messages->add($language->translate(['PLUGIN_LOGIN.EMAIL_CHANGE_CONFIRMED', htmlspecialchars($newEmail, ENT_QUOTES, 'UTF-8')]), 'info');
+        $this->grav->redirectLangSafe($redirect_route);
     }
 
     /**
-     * Set Unauthorized page
-     * @throws \Exception
+     * Handle magic login links.
      */
-    public function setUnauthorizedPage()
+    public function handleMagicLogin(): void
     {
-        $route = $this->config->get('plugins.login.route_unauthorized');
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+        /** @var Message $messages */
+        $messages = $this->grav['messages'];
+        /** @var UserCollectionInterface $users */
+        $users = $this->grav['accounts'];
 
-        /** @var Pages $pages */
-        $pages = $this->grav['pages'];
-        $page = $pages->dispatch($route);
+        $magicEnabled = $this->config->get('plugins.login.magic_link.enabled', false);
+        $magicRequestRoute = $magicEnabled
+            ? ($this->login->getRoute('magic') ?: ($this->login->getRoute('login') ?: '/'))
+            : ($this->login->getRoute('login') ?: '/');
 
-        if (!$page) {
-            $page = new Page();
-            $page->init(new \SplFileInfo(__DIR__ . '/pages/unauthorized.md'));
-            $page->slug(basename($route));
-
-            $pages->addPage($page, $route);
+        if (!$magicEnabled) {
+            $this->grav->redirectLangSafe($magicRequestRoute);
+            return;
         }
 
-        // Unauthorized page may not have the correct Cache-Control header set, force no-store for the proxies.
-        $cacheControl = $page->cacheControl();
-        if (!$cacheControl) {
-            $page->cacheControl('private, no-cache, must-revalidate');
+        $username = (string)$uri->param('username');
+        $token = (string)$uri->param('token');
+        if ($username === '' || $token === '') {
+            $this->grav->redirectLangSafe($magicRequestRoute);
+            return;
         }
 
-        unset($this->grav['page']);
-        $this->grav['page'] = $page;
+        $user = $users->load($username);
+        if (is_callable([$user, 'refresh'])) {
+            $user->refresh(true);
+        }
+
+        $magicData = (string)($user->magic_login ?? '');
+        if (!$user || !$user->exists() || !str_contains($magicData, '::')) {
+            $messages->add($this->grav['language']->translate('PLUGIN_LOGIN.MAGIC_LINK_INVALID'), 'error');
+            $this->grav->redirectLangSafe($magicRequestRoute);
+            return;
+        }
+
+        [$storedHash, $expires] = explode('::', $magicData, 2);
+        $expiresAt = (int)$expires;
+        if ($expiresAt && time() > $expiresAt) {
+            unset($user->magic_login);
+            $user->save();
+            $messages->add($this->grav['language']->translate('PLUGIN_LOGIN.MAGIC_LINK_EXPIRED'), 'error');
+            $this->grav->redirectLangSafe($magicRequestRoute);
+            return;
+        }
+
+        $tokenHash = hash('sha256', $token);
+        if (!hash_equals($storedHash, $tokenHash)) {
+            $messages->add($this->grav['language']->translate('PLUGIN_LOGIN.MAGIC_LINK_INVALID'), 'error');
+            $this->grav->redirectLangSafe($magicRequestRoute);
+            return;
+        }
+
+        // Invalidate token before authorization to prevent race-condition reuse.
+        unset($user->magic_login);
+        $user->save();
+
+        $event = $this->login->login(
+            ['username' => $user->username],
+            [
+                'magic_link' => true,
+                'rate_limit' => false,
+                'remember_me' => false,
+                'twofa' => $this->config->get('plugins.login.twofa_enabled', false)
+            ],
+            ['user' => $user, 'return_event' => true]
+        );
+
+        $message = $event->getMessage();
+        if ($message) {
+            $messages->add($this->grav['language']->translate($message), $event->getMessageType());
+        }
+
+        $redirect = null;
+        $redirectCode = null;
+        $loggedUser = $event->getUser();
+        if ($loggedUser->authenticated) {
+            if ($loggedUser->authorized) {
+                if (!$message) {
+                    $messages->add($this->grav['language']->translate('PLUGIN_LOGIN.LOGIN_SUCCESSFUL'), 'info');
+                }
+                $redirect = $this->grav['session']->redirect_after_login ?: $this->login->getRoute('after_login') ?: '/';
+            } else {
+                $redirect = $this->login->getRoute('login') ?: '/';
+            }
+        } else {
+            if (!$message) {
+                $messages->add($this->grav['language']->translate('PLUGIN_LOGIN.LOGIN_FAILED'), 'error');
+            }
+            $redirect = $magicRequestRoute;
+        }
+
+        if ($event->getRedirect()) {
+            $redirect = $event->getRedirect();
+            $redirectCode = $event->getRedirectCode();
+        }
+
+        $this->grav->redirectLangSafe($redirect ?: '/', $redirectCode);
     }
 
     /**
      * Initialize login controller
      */
-    public function loginController()
+    public function loginController(): void
     {
         /** @var Uri $uri */
         $uri = $this->grav['uri'];
@@ -602,6 +955,61 @@ class LoginPlugin extends Plugin
                     return;
                 }
                 break;
+
+            case 'magicRequest':
+                if (!isset($post['magic-form-nonce']) || !Utils::verifyNonce($post['magic-form-nonce'], 'magic-form')) {
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    return;
+                }
+                break;
+
+            case 'twofa_cancel':
+                // The 2FA form carries the `login-form` nonce, so verify it here
+                // too — `twofa_cancel` was previously unguarded, letting it run
+                // (and act on a client `_redirect`) without a nonce.
+                if (!isset($post['login-form-nonce']) || !Utils::verifyNonce($post['login-form-nonce'], 'login-form')) {
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    return;
+                }
+                break;
+
+            case 'resendEmailChange':
+            case 'cancelEmailChange':
+                // Both change the account, so they take a POST with the
+                // `login-form` nonce the profile form's email_change field sends.
+                if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST'
+                    || !isset($post['login-form-nonce'])
+                    || !Utils::verifyNonce($post['login-form-nonce'], 'login-form')) {
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    return;
+                }
+                break;
+
+            case 'regenerate2FASecret':
+                // CSRF hardening (GHSA-4px8): this task was previously reachable
+                // with no nonce and via a top-level GET (SameSite=Lax). Require
+                // POST to kill the Lax GET vector, and verify the `login-form`
+                // nonce that the 2FA setup field now sends.
+                if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST'
+                    || !isset($post['login-form-nonce'])
+                    || !Utils::verifyNonce($post['login-form-nonce'], 'login-form')) {
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    return;
+                }
+                break;
+
+            case 'logout':
+                // CSRF hardening (GHSA-cmm3-j4qp-472x): `logout` had neither a nonce
+                // nor a method check, so a cross-site top-level GET carried the
+                // session cookie (SameSite=Lax sends it on navigations) and forced
+                // the victim out. Worse, when that browser held no valid remember-me
+                // cookie, userLogout() falls through to cleanAllTriplets() and wipes
+                // the account's persistent login on *every* device.
+                if (!$this->isSelfInitiatedLogout($uri, $post)) {
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    return;
+                }
+                break;
         }
 
         $controller = new Controller($this->grav, $task, $post);
@@ -610,23 +1018,237 @@ class LoginPlugin extends Plugin
     }
 
     /**
+     * Decide whether a `login.logout` request was started by the user rather than
+     * forged by a third-party page.
+     *
+     * Logout is deliberately more permissive than the other tasks. The plugin has
+     * always accepted a plain link, and third-party themes rely on that -- several
+     * ship a bare `<a href="...?task=login.logout">` with no nonce at all, and this
+     * plugin's own 2FA cancel button posts the task carrying `login-form-nonce`
+     * rather than `logout-nonce`. Forcing every theme onto a nonced POST would break
+     * working sites for an issue whose whole impact is an unwanted sign-out, so this
+     * accepts any credible proof the request is the user's own.
+     *
+     * @param Uri   $uri
+     * @param array $post
+     * @return bool
+     */
+    protected function isSelfInitiatedLogout(Uri $uri, array $post): bool
+    {
+        // 1. The canonical logout link this plugin renders. login-status.html.twig
+        //    and login-form.html.twig have always called
+        //    uri.addNonce(..., 'logout-form', 'logout-nonce'); nothing ever verified it.
+        $nonce = $post['logout-nonce'] ?? $uri->param('logout-nonce');
+        if (is_string($nonce) && $nonce !== '' && Utils::verifyNonce($nonce, 'logout-form')) {
+            return true;
+        }
+
+        // 2. The 2FA screen's cancel button posts task=login.logout from the login
+        //    form, so it carries the `login-form` nonce instead.
+        if (isset($post['login-form-nonce']) && Utils::verifyNonce($post['login-form-nonce'], 'login-form')) {
+            return true;
+        }
+
+        // 3. No nonce. Ask the browser where the request came from. Every engine that
+        //    supports fetch metadata sends Sec-Fetch-Site on navigations: `cross-site`
+        //    is the forged case, and `none` means the user typed the URL or followed a
+        //    bookmark. This is what keeps a theme's bare <a> working on a same-origin
+        //    click while rejecting the attacker's cross-site navigation.
+        $fetchSite = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? null;
+        if (is_string($fetchSite) && $fetchSite !== '') {
+            return in_array(strtolower($fetchSite), ['same-origin', 'same-site', 'none'], true);
+        }
+
+        // 4. A browser too old to send fetch metadata. Compare the referring origin:
+        //    the strict-origin-when-cross-origin policy browsers now default to still
+        //    sends the origin across sites.
+        $referrer = $_SERVER['HTTP_REFERER'] ?? null;
+        if (is_string($referrer) && $referrer !== '') {
+            $parts = parse_url($referrer);
+            if (!isset($parts['scheme'], $parts['host'])) {
+                return false;
+            }
+
+            $origin = $parts['scheme'] . '://' . $parts['host'];
+            if (isset($parts['port'])) {
+                $origin .= ':' . $parts['port'];
+            }
+
+            // Uri::base() is the scheme://host[:port] origin; Uri::rootUrl(true)
+            // would also carry any subdirectory, which is not part of an origin.
+            return rtrim($origin, '/') === rtrim($uri->base(), '/');
+        }
+
+        // 5. No nonce, no fetch metadata, no referrer: a bare navigation from a
+        //    pre-2020 browser. Allow it rather than stranding those visitors with no
+        //    way to sign out. The nonced link above closes the vector for every
+        //    current browser, and the impact here is a sign-out, not a compromise.
+        return true;
+    }
+
+    /**
      * Authorize the Page fallback url (page media accessed through the page route)
      */
-    public function authorizeFallBackUrl()
+    public function authorizeFallBackUrl(): void
     {
-        if ($this->config->get('plugins.login.protect_protected_page_media', false)) {
-            $page_url = \dirname($this->grav['uri']->path());
-            $page = $this->grav['pages']->find($page_url);
-            unset($this->grav['page']);
-            $this->grav['page'] = $page;
-            $this->authorizePage();
+        if (!$this->config->get('plugins.login.protect_protected_page_media', false)) {
+            return;
         }
+
+        $page_url = \dirname($this->grav['uri']->path());
+
+        // Resolve the page the same way `Grav::fallbackUrl()` does, so the rules
+        // being checked belong to the page core is about to serve the file from.
+        // Without `$all`, a `site.routes` entry can hand back a different page.
+        $page = $this->grav['pages']->find($page_url, true);
+
+        // Media stored inside a module folder (`_module`) belongs to the page that
+        // includes the module, so climb to the nearest non-module ancestor and apply
+        // that page's `access` rules. `authorizePage()` skips modules outright, which
+        // left module media served to anyone. getgrav/grav-plugin-login#294
+        while ($page instanceof PageInterface && $page->isModule()) {
+            $page = $page->parent();
+        }
+
+        if (!$page instanceof PageInterface) {
+            return;
+        }
+
+        unset($this->grav['page']);
+        $this->grav['page'] = $page;
+        $this->authorizePage();
+    }
+
+    /**
+     * @param Event $event
+     */
+    public function onDisplayErrorPage401(Event $event): void
+    {
+        if ($this->isAdmin()) {
+            return;
+        }
+
+        $event['page'] = $this->login->addPage('login');
+        $event->stopPropagation();
+    }
+
+    /**
+     * @param Event $event
+     */
+    public function onDisplayErrorPage403(Event $event): void
+    {
+        if ($this->isAdmin()) {
+            return;
+        }
+
+        $event['page'] = $this->login->addPage('unauthorized');
+        $event->stopPropagation();
+    }
+
+    /**
+     * [onPageInitialized]
+     */
+    public function authorizeLoginPage(Event $event): void
+    {
+        if ($this->isAdmin()) {
+            return;
+        }
+
+        $page = $event['page'];
+        if (!$page instanceof PageInterface) {
+            return;
+        }
+
+        // Only applies to the page templates defined by login plugin.
+        $template = $page->template();
+        if (!in_array($template, ['forgot', 'login', 'magic', 'profile', 'register', 'reset', 'unauthorized'])) {
+            return;
+        }
+
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+        $token = $uri->param('');
+        if ($token && $template === 'register') {
+            // Special register page for invited users.
+            $invitation = Invitations::getInstance()->get($token);
+            if ($invitation && !$invitation->isExpired()) {
+                $this->invitation = $invitation;
+                return;
+            }
+        }
+
+        // Check if the login page is enabled.
+        $route = $this->login->getRoute($template);
+        if (null === $route) {
+            $page->routable(false);
+        }
+    }
+
+    /**
+     * @param PageAuthorizeEvent $event
+     * @return void
+     */
+    public function onPageAuthorizeEvent(PageAuthorizeEvent $event): void
+    {
+        if ($event->isDenied()) {
+            // Deny access always wins.
+            return;
+        }
+
+        $page = $event->page;
+        $header = $page->header();
+        $rules = (array)($header->access ?? []);
+
+        if (!$rules && $event->config->get('parent_acl')) {
+            // If page has no ACL rules, use its parent's rules
+            $parent = $page->parent();
+            while (!$rules and $parent) {
+                $header = $parent->header();
+                $rules = (array)($header->access ?? []);
+                $parent = $parent->parent();
+            }
+        }
+
+        // Continue to the page if it has no access rules.
+        if (!$rules) {
+            return;
+        }
+
+        // Mark the page to be protected by access rules.
+        $event->setProtectedAccess();
+
+        // Continue to the page if user is authorized to access the page.
+        $user = $event->user;
+        foreach ($rules as $rule => $value) {
+            if (is_int($rule)) {
+                if ($user->authorize($value) === true) {
+                    $event->allow();
+
+                    return;
+                }
+            } elseif (is_array($value)) {
+                foreach ($value as $nested_rule => $nested_value) {
+                    if ($user->authorize($rule . '.' . $nested_rule) === Utils::isPositive($nested_value)) {
+                        $event->allow();
+
+                        return;
+                    }
+                }
+            } elseif ($user->authorize($rule) === Utils::isPositive($value)) {
+                $event->allow();
+
+                return;
+            }
+        }
+
+        // No match, deny access.
+        $event->deny();
     }
 
     /**
      * [onPageInitialized] Authorize Page
      */
-    public function authorizePage()
+    public function authorizePage(): void
     {
         if (!$this->authenticated) {
             return;
@@ -635,10 +1257,13 @@ class LoginPlugin extends Plugin
         /** @var UserInterface $user */
         $user = $this->grav['user'];
 
-        /** @var PageInterface $page */
-        $page = $this->grav['page'];
+        $page = $this->grav['page'] ?? null;
+        if (!$page instanceof PageInterface || $page->isModule()) {
+            return;
+        }
 
-        if (!$page || $this->grav['login']->isUserAuthorizedForPage($user, $page, $this->mergeConfig($page))) {
+        $hasAccess = $this->login->isUserAuthorizedForPage($user, $page, $this->mergeConfig($page));
+        if ($hasAccess) {
             return;
         }
 
@@ -646,60 +1271,37 @@ class LoginPlugin extends Plugin
         $uri_extension = $this->grav['uri']->extension('html');
         $supported_types = $this->config->get('media.types');
         if ($uri_extension !== 'html' && array_key_exists($uri_extension, $supported_types)) {
-            header('HTTP/1.0 403 Forbidden');
-            exit;
+            $response = new Response(403);
+
+            $this->grav->close($response);
         }
 
-        $authorized = $user->authenticated && $user->authorized;
-
         // User is not logged in; redirect to login page.
-        if ($this->redirect_to_login && $this->route && !$authorized) {
-            $this->grav->redirectLangSafe($this->route, 302);
+        $authenticated = $user->authenticated && $user->authorized;
+        $login_route = $this->login->getRoute('login');
+        if (!$authenticated && $this->redirect_to_login && $login_route) {
+            // The visitor is off to log in, so a session waiting for its first write
+            // (system.session.lazy) starts here to remember which page to come back to.
+            if (isset($this->lazy_redirect)) {
+                $this->grav['session']->redirect_after_login = $this->lazy_redirect;
+            }
+            $this->grav->redirectLangSafe($login_route, 302);
         }
 
         /** @var Twig $twig */
         $twig = $this->grav['twig'];
-        $login_page = null;
 
         // Reset page with login page.
-        if (!$authorized) {
-            if ($this->route) {
-                $login_page = $this->grav['pages']->dispatch($this->route);
-            }
-
-            if (!$login_page) {
-                $login_page = new Page();
-
-                // Get the admin Login page is needed, else the default
-                if ($this->isAdmin()) {
-                    $login_file = $this->grav['locator']->findResource('plugins://admin/pages/admin/login.md');
-                    $login_page->init(new \SplFileInfo($login_file));
-                } else {
-                    $login_page->init(new \SplFileInfo(__DIR__ . '/pages/login.md'));
-                }
-
-                $login_page->slug(basename($this->route));
-
-                /** @var Pages $pages */
-                $pages = $this->grav['pages'];
-                $pages->addPage($login_page, $this->route);
-            }
-
-            // Login page may not have the correct Cache-Control header set, force no-store for the proxies.
-            $cacheControl = $page->cacheControl();
-            if (!$cacheControl) {
-                $page->cacheControl('private, no-cache, must-revalidate');
-            }
-
+        if (!$authenticated) {
             $this->authenticated = false;
+
+            $login_page = $this->login->addPage('login', $this->login->getRoute('login') ?? '/login');
+
             unset($this->grav['page']);
             $this->grav['page'] = $login_page;
 
             $twig->twig_vars['form'] = new Form($login_page);
         } else {
-            /** @var Language $l */
-            $l = $this->grav['language'];
-            $this->grav['messages']->add($l->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'error');
             $twig->twig_vars['notAuthorized'] = true;
 
             $this->setUnauthorizedPage();
@@ -707,9 +1309,52 @@ class LoginPlugin extends Plugin
     }
 
     /**
+     * [onTwigInitialized] Register the `authenticated()` Twig helper.
+     *
+     * Lets templates and page content ask whether the current visitor is
+     * logged in — and, optionally, whether they hold a given permission or
+     * belong to a given group — without touching the `grav.user` object, which
+     * the content Twig sandbox blocks.
+     */
+    public function onTwigInitialized(): void
+    {
+        $login = $this->grav['login'];
+        $this->grav['twig']->twig()->addFunction(
+            new TwigFunction('authenticated', static function ($permission = null, $group = null) use ($login) {
+                return $login->isAuthenticated($permission, $group);
+            })
+        );
+    }
+
+    /**
+     * [onBuildTwigSandboxPolicy] Allow `authenticated()` inside the content
+     * sandbox so editor-authored page content can use `{% if authenticated() %}`.
+     * The helper only ever returns a boolean about the current visitor, so it is
+     * safe to expose.
+     */
+    public function onBuildTwigSandboxPolicy(Event $event): void
+    {
+        $functions = $event['functions'];
+        $functions[] = 'authenticated';
+        $event['functions'] = $functions;
+    }
+
+    /**
+     * [onShortcodeHandlers] Register the optional `[authenticated]` / `[guest]`
+     * shortcodes. This event is fired only by the shortcode-core plugin, so the
+     * shortcodes are added when it is installed without the Login plugin
+     * depending on it; the same checks are always available via the
+     * `authenticated()` Twig function.
+     */
+    public function onShortcodeHandlers(): void
+    {
+        $this->grav['shortcode']->registerAllShortcodes(__DIR__ . '/classes/shortcodes');
+    }
+
+    /**
      * [onTwigTemplatePaths] Add twig paths to plugin templates.
      */
-    public function onTwigTemplatePaths()
+    public function onTwigTemplatePaths(): void
     {
         $twig = $this->grav['twig'];
         $twig->twig_paths[] = __DIR__ . '/templates';
@@ -718,7 +1363,7 @@ class LoginPlugin extends Plugin
     /**
      * [onTwigSiteVariables] Set all twig variables for generating output.
      */
-    public function onTwigSiteVariables()
+    public function onTwigSiteVariables(): void
     {
         /** @var Twig $twig */
         $twig = $this->grav['twig'];
@@ -735,6 +1380,17 @@ class LoginPlugin extends Plugin
         // add CSS for frontend if required
         if (!$this->isAdmin() && $this->config->get('plugins.login.built_in_css')) {
             $this->grav['assets']->add('plugin://login/css/login.css');
+        }
+
+        // Handle invitation during the registration.
+        if ($this->invitation) {
+            /** @var Form $form */
+            $form = $twig->twig_vars['form'];
+            /** @var Uri $uri */
+            $uri = $this->grav['uri'];
+
+            $form->action = $uri->route() . $uri->params();
+            $form->setData('email', $this->invitation->email);
         }
 
         $task = $this->grav['uri']->param('task') ?: ($_POST['task'] ?? '');
@@ -764,7 +1420,7 @@ class LoginPlugin extends Plugin
      * @param Form $form
      * @throws \RuntimeException
      */
-    private function processUserRegistration($form, Event $event)
+    private function processUserRegistration(FormInterface $form, Event $event): void
     {
         $language = $this->grav['language'];
         $messages = $this->grav['messages'];
@@ -773,8 +1429,13 @@ class LoginPlugin extends Plugin
             throw new \RuntimeException($language->translate('PLUGIN_LOGIN.PLUGIN_LOGIN_DISABLED'));
         }
 
-        if (!$this->config->get('plugins.login.user_registration.enabled')) {
-            throw new \RuntimeException($language->translate('PLUGIN_LOGIN.USER_REGISTRATION_DISABLED'));
+        if (null === $this->invitation && !$this->config->get('plugins.login.user_registration.enabled')) {
+            $event->stopPropagation();
+            $token = $this->grav['uri']->param('');
+            $message_key = $token ? 'PLUGIN_LOGIN.USER_INVITATION_INVALID' : 'PLUGIN_LOGIN.USER_REGISTRATION_DISABLED';
+            $this->grav['messages']->add($language->translate($message_key), 'error');
+            $this->grav->redirectLangSafe($this->grav['uri']->rootUrl(), 302);
+            return;
         }
 
         $form->validate();
@@ -784,6 +1445,38 @@ class LoginPlugin extends Plugin
 
         /** @var UserCollectionInterface $users */
         $users = $this->grav['accounts'];
+
+        // Registration is an unauthenticated endpoint that answers "is this
+        // address already taken?", so it gets a per-IP counter to stop it
+        // being walked through a list of addresses (GHSA-crh8-xm27-j9g9).
+        $registrationLimiter = $this->login->getRateLimiter('registrations');
+        $ipKey = $this->login->getIpKey();
+        $registrationLimiter->registerRateLimitedAction($ipKey, 'ip');
+
+        if ($registrationLimiter->isRateLimited($ipKey, 'ip')) {
+            $this->grav->fireEvent('onFormValidationError', new Event([
+                'form'    => $form,
+                'message' => $language->translate([
+                    'PLUGIN_LOGIN.TOO_MANY_REGISTRATION_ATTEMPTS',
+                    $registrationLimiter->getInterval()
+                ])
+            ]));
+            $event->stopPropagation();
+            return;
+        }
+
+        // The HTML5 email field accepts addresses such as "test@test" that
+        // fail the server-side check in Login::register(), which would
+        // otherwise end up as a 500 error.
+        $email = $form_data->get('email');
+        if (!is_string($email) || !filter_var(trim($email), FILTER_VALIDATE_EMAIL)) {
+            $this->grav->fireEvent('onFormValidationError', new Event([
+                'form'    => $form,
+                'message' => $language->translate('PLUGIN_LOGIN.EMAIL_VALIDATION_MESSAGE')
+            ]));
+            $event->stopPropagation();
+            return;
+        }
 
         // Check for existing username
         $username = $form_data->get('username');
@@ -801,9 +1494,30 @@ class LoginPlugin extends Plugin
         }
 
         // Check for existing email
-        $email    = $form_data->get('email');
         $existing_email = $users->find($email, ['email']);
         if ($existing_email->exists()) {
+            // When registration finishes over email anyway, answer exactly as
+            // a fresh address would be answered and tell the real owner
+            // instead, so the form stops confirming which addresses have an
+            // account (GHSA-crh8-xm27-j9g9). Without activation email the
+            // account is usable immediately, so a silent non-answer would
+            // leave a legitimate visitor stuck — keep the explicit message
+            // there.
+            if ($this->config->get('plugins.login.user_registration.options.send_activation_email', false)) {
+                $this->login->sendAlreadyRegisteredEmail($existing_email);
+
+                $fullname = $form_data->get('fullname') ?: $form_data->get('username');
+                $messages->add(
+                    $language->translate(['PLUGIN_LOGIN.ACTIVATION_NOTICE_MSG', $fullname]),
+                    'info'
+                );
+
+                $event->stopPropagation();
+                $redirect = $this->config->get('plugins.login.user_registration.redirect_after_registration');
+                $this->grav->redirectLangSafe($redirect ?: $this->grav['uri']->rootUrl(), 302);
+                return;
+            }
+
             $this->grav->fireEvent('onFormValidationError', new Event([
                 'form'    => $form,
                 'message' => $language->translate([
@@ -837,6 +1551,13 @@ class LoginPlugin extends Plugin
 
         $fields = (array)$this->config->get('plugins.login.user_registration.fields', []);
 
+        // Privilege fields must never be sourced from public registration form input —
+        // honoring attacker-supplied values would grant instant super-admin even if an
+        // administrator mistakenly added them to `user_registration.fields`
+        // (GHSA-pxm6-mhxr-q4mj). Server-side `default_values`, invitations, and the
+        // `plugins.login.user_registration.{groups,access}` config remain authoritative.
+        $privilegeFields = ['groups', 'access'];
+
         foreach ($fields as $field) {
             // Process value of field if set in the page process.register_user
             $default_values = (array)$this->config->get('plugins.login.user_registration.default_values');
@@ -844,7 +1565,7 @@ class LoginPlugin extends Plugin
                 foreach ($default_values as $key => $param) {
 
                     if ($key === $field) {
-                        if (\is_array($param)) {
+                        if (is_array($param)) {
                             $values = explode(',', $param);
                         } else {
                             $values = $param;
@@ -852,6 +1573,17 @@ class LoginPlugin extends Plugin
                         $data[$field] = $values;
                     }
                 }
+            }
+
+            if (in_array($field, $privilegeFields, true)) {
+                if ($form_data->get($field) !== null) {
+                    $this->grav['log']->warning(sprintf(
+                        'Login registration: ignored client-supplied "%s" from form submission (username=%s)',
+                        $field,
+                        is_string($username) ? $username : '<invalid>'
+                    ));
+                }
+                continue;
             }
 
             if (!isset($data[$field]) && $form_data->get($field)) {
@@ -864,6 +1596,9 @@ class LoginPlugin extends Plugin
         } else {
             $data['state'] = 'enabled';
         }
+        if ($this->invitation) {
+            $data += $this->invitation->account;
+        }
         $data_object = (object) $data;
         $this->grav->fireEvent('onUserLoginRegisterData', new Event(['data' => &$data_object]));
 
@@ -872,6 +1607,14 @@ class LoginPlugin extends Plugin
         if ($user instanceof FlexObjectInterface) {
             $flash->clearFiles();
             $flash->save();
+        }
+
+        // Remove invitation after it has been used.
+        if ($this->invitation) {
+            $invitations = Invitations::getInstance();
+            $invitations->remove($this->invitation);
+            $invitations->save();
+            $this->invitation = null;
         }
 
         $this->grav->fireEvent('onUserLoginRegisteredUser', new Event(['user' => &$user]));
@@ -922,20 +1665,33 @@ class LoginPlugin extends Plugin
     /**
      * Save user profile information
      *
-     * @param Form $form
+     * @param FormInterface $form
      * @param Event $event
      * @return bool
      */
-    private function processUserProfile($form, Event $event)
+    private function processUserProfile(FormInterface $form, Event $event): bool
     {
         /** @var UserInterface $user */
         $user     = $this->grav['user'];
         $language = $this->grav['language'];
 
-        $form->validate();
-
         /** @var Data $form_data */
         $form_data = $form->getData();
+        // The form has already filtered empty strings to null. Keep those clear
+        // operations when validation filters the data a second time.
+        $form_data->setMissingValuesAsNull(true);
+        if (!$form->validate()) {
+            // Match the returns below: without firing the event and stopping
+            // propagation, Form::process() carries on to the `message` action and
+            // reports the profile as updated when nothing was saved.
+            $this->grav->fireEvent('onFormValidationError', new Event([
+                'form'     => $form,
+                'message'  => $form->getError() ?: $language->translate('PLUGIN_LOGIN.PROFILE_NOT_UPDATED'),
+                'messages' => $form->getErrors()
+            ]));
+            $event->stopPropagation();
+            return false;
+        }
 
         // Don't save if user doesn't exist
         if (!$user->exists()) {
@@ -946,6 +1702,22 @@ class LoginPlugin extends Plugin
             $event->stopPropagation();
             return false;
         }
+
+        // A user who has supplied the correct password but has not completed
+        // the second-factor challenge exists in the session, but is not yet
+        // authorized to change account data.
+        if ($user->authorized !== true) {
+            $this->grav->fireEvent('onFormValidationError', new Event([
+                'form'    => $form,
+                'message' => $language->translate('PLUGIN_LOGIN.PROFILE_NOT_UPDATED')
+            ]));
+            $event->stopPropagation();
+            return false;
+        }
+
+        // Pick up an email change confirmed in another browser, so this save
+        // doesn't write the old address back.
+        $this->login->refreshEmailFields($user);
 
         // Stop overloading of username
         $username = $form->data('username');
@@ -964,10 +1736,18 @@ class LoginPlugin extends Plugin
         /** @var UserCollectionInterface $users */
         $users = $this->grav['accounts'];
 
+        $verifyEmailChange = (bool)$this->config->get('plugins.login.profile.verify_email_change', true);
+
         // Check for existing email
         $email = $form->getData('email');
         $existing_email = $users->find($email, ['email']);
-        if ($user->username !== $existing_email->username && $existing_email->exists()) {
+        // With email changes confirmed and registration finishing over email,
+        // registration doesn't say whether an address is taken
+        // (GHSA-crh8-xm27-j9g9), so neither does this form: the change shows
+        // as waiting and no link goes out.
+        $hideTakenEmail = $verifyEmailChange
+            && $this->config->get('plugins.login.user_registration.options.send_activation_email', false);
+        if (!$hideTakenEmail && $user->username !== $existing_email->username && $existing_email->exists()) {
             $this->grav->fireEvent('onFormValidationError', new Event([
                 'form'    => $form,
                 'message' => $language->translate([
@@ -981,11 +1761,79 @@ class LoginPlugin extends Plugin
 
         $fields = (array)$this->config->get('plugins.login.user_registration.fields', []);
 
+        // Privilege fields must never be sourced from self-service profile input, the
+        // same defence the registration handler applies (GHSA-pxm6-mhxr-q4mj). On the
+        // default DataUser backend `update()` is a raw merge with no field-level
+        // security gate, so an attacker-supplied `access`/`groups` would otherwise
+        // persist straight to the account and grant super-admin (GHSA-h33v-82r9-v8pm).
+        $privilegeFields = ['groups', 'access'];
+
+        $formValues = $form_data->toArray();
+        $missing = new \stdClass();
         $data = [];
         foreach ($fields as $field) {
-            $data_field = $form_data->get($field);
-            if (!isset($data[$field]) && isset($data_field)) {
-                $data[$field] = $form_data->get($field);
+            if (in_array($field, $privilegeFields, true)) {
+                if ($form_data->get($field) !== null) {
+                    $this->grav['log']->warning(sprintf(
+                        'Login profile: ignored client-supplied "%s" from form submission (username=%s)',
+                        $field,
+                        is_string($user->get('username')) ? $user->get('username') : '<invalid>'
+                    ));
+                }
+                continue;
+            }
+
+            // Preserve dot-path lookup while distinguishing a cleared value from an absent field.
+            $data_field = $formValues;
+            foreach (explode('.', $field) as $segment) {
+                if (is_object($data_field) && isset($data_field->{$segment})) {
+                    $data_field = $data_field->{$segment};
+                } elseif (is_array($data_field) && array_key_exists($segment, $data_field)) {
+                    $data_field = $data_field[$segment];
+                } else {
+                    $data_field = $missing;
+                    break;
+                }
+            }
+            if (!array_key_exists($field, $data) && $data_field !== $missing) {
+                $data[$field] = $data_field;
+            }
+        }
+
+        // A new address is only kept as pending until the link mailed to it is
+        // opened (handleEmailChangeConfirmation). The account keeps its old,
+        // proven address in the meantime.
+        $pendingEmail = null;
+        if (array_key_exists('email', $data) && is_string($data['email'])) {
+            $newEmail = trim($data['email']);
+            $oldEmail = trim((string)$user->get('email', ''));
+            $changed = $newEmail !== '' && mb_strtolower($newEmail) !== mb_strtolower($oldEmail);
+
+            if ($changed && $verifyEmailChange) {
+                if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                    $this->grav->fireEvent('onFormValidationError', new Event([
+                        'form'    => $form,
+                        'message' => $language->translate('PLUGIN_LOGIN.EMAIL_VALIDATION_MESSAGE')
+                    ]));
+                    $event->stopPropagation();
+                    return false;
+                }
+
+                $limiter = $this->login->getRateLimiter('email_changes');
+                if ($limiter->hasReachedLimit($user->username)) {
+                    $this->grav->fireEvent('onFormValidationError', new Event([
+                        'form'    => $form,
+                        'message' => $language->translate(['PLUGIN_LOGIN.EMAIL_CHANGE_TOO_MANY', $limiter->getInterval()])
+                    ]));
+                    $event->stopPropagation();
+                    return false;
+                }
+
+                unset($data['email']);
+                $pendingEmail = $newEmail;
+            } elseif ($changed) {
+                // Saved straight away, so any waiting change is out of date.
+                $this->login->clearEmailChange($user);
             }
         }
 
@@ -997,6 +1845,15 @@ class LoginPlugin extends Plugin
             if ($user instanceof FlexObjectInterface) {
                 $flash->clearFiles();
                 $flash->save();
+            }
+
+            if ($pendingEmail !== null) {
+                $this->login->getRateLimiter('email_changes')->registerRateLimitedAction($user->username);
+                $this->login->requestEmailChange($user, $pendingEmail);
+                $this->grav['messages']->add(
+                    $language->translate(['PLUGIN_LOGIN.EMAIL_CHANGE_SENT', htmlspecialchars($pendingEmail, ENT_QUOTES, 'UTF-8')]),
+                    'info'
+                );
             }
         } catch (\Exception $e) {
             $form->setMessage($e->getMessage(), 'error');
@@ -1015,7 +1872,7 @@ class LoginPlugin extends Plugin
      * @param Event $event
      * @throws \RuntimeException
      */
-    public function onFormProcessed(Event $event)
+    public function onFormProcessed(Event $event): void
     {
         $form = $event['form'];
         $action = $event['action'];
@@ -1034,7 +1891,7 @@ class LoginPlugin extends Plugin
      * @param UserLoginEvent $event
      * @throws \RuntimeException
      */
-    public function userLoginAuthenticateRateLimit(UserLoginEvent $event)
+    public function userLoginAuthenticateRateLimit(UserLoginEvent $event): void
     {
         // Check that we're logging in with rate limit turned on.
         if (!$event->getOption('rate_limit')) {
@@ -1044,13 +1901,13 @@ class LoginPlugin extends Plugin
         $credentials = $event->getCredentials();
         $username = $credentials['username'];
 
-        // Check rate limit for both IP and user, but allow each IP a single try even if user is already rate limited.
+        // Refuse while either the IP or the username has used up its attempts.
         if ($interval = $this->login->checkLoginRateLimit($username)) {
             /** @var Language $t */
             $t = $this->grav['language'];
 
-            $event->setMessage($t->translate(['PLUGIN_LOGIN.TOO_MANY_LOGIN_ATTEMPTS', $interval]), 'error');
-            $event->setRedirect($this->grav['config']->get('plugins.login.route', '/'));
+            $event->setMessage($t->translate(['PLUGIN_LOGIN.TOO_MANY_LOGIN_ATTEMPTS_RETRY', $interval]), 'error');
+            $event->setRedirect($this->login->getRoute('login') ?? '/');
             $event->setStatus(UserLoginEvent::AUTHENTICATION_CANCELLED);
             $event->stopPropagation();
         }
@@ -1060,7 +1917,7 @@ class LoginPlugin extends Plugin
      * @param UserLoginEvent $event
      * @throws \RuntimeException
      */
-    public function userLoginAuthenticateByRegistration(UserLoginEvent $event)
+    public function userLoginAuthenticateByRegistration(UserLoginEvent $event): void
     {
         // Check that we're logging in after registration.
         if (!$event->getOption('after_registration') || $this->isAdmin()) {
@@ -1075,7 +1932,7 @@ class LoginPlugin extends Plugin
      * @param UserLoginEvent $event
      * @throws \RuntimeException
      */
-    public function userLoginAuthenticateByRememberMe(UserLoginEvent $event)
+    public function userLoginAuthenticateByRememberMe(UserLoginEvent $event): void
     {
         // Check that we're logging in with remember me.
         if (!$event->getOption('remember_me_login') || !$event->getOption('remember_me') || $this->isAdmin()) {
@@ -1114,7 +1971,7 @@ class LoginPlugin extends Plugin
             // Allow remember me to work with different login methods.
             $user = $users->load($username);
             if (is_callable([$user, 'refresh'])) {
-                $user->refresh();
+                $user->refresh(true);
             }
 
             $event->setCredential('username', $username);
@@ -1133,12 +1990,10 @@ class LoginPlugin extends Plugin
 
             $event->setStatus($event::AUTHENTICATION_SUCCESS);
             $event->stopPropagation();
-
-            return;
         }
     }
 
-    public function userLoginAuthenticateByEmail(UserLoginEvent $event)
+    public function userLoginAuthenticateByEmail(UserLoginEvent $event): void
     {
         if (($username = $event->getCredential('username')) && !$event->getUser()->exists()) {
             /** @var UserCollectionInterface $users */
@@ -1148,7 +2003,25 @@ class LoginPlugin extends Plugin
         }
     }
 
-    public function userLoginAuthenticate(UserLoginEvent $event)
+    public function userLoginAuthenticateByMagic(UserLoginEvent $event): void
+    {
+        if (!$event->getOption('magic_link')) {
+            return;
+        }
+
+        $user = $event->getUser();
+        if (!$user->exists()) {
+            $event->setStatus($event::AUTHENTICATION_FAILURE);
+            $event->stopPropagation();
+
+            return;
+        }
+
+        $event->setStatus($event::AUTHENTICATION_SUCCESS);
+        $event->stopPropagation();
+    }
+
+    public function userLoginAuthenticate(UserLoginEvent $event): void
     {
         $user = $event->getUser();
         $credentials = $event->getCredentials();
@@ -1182,13 +2055,15 @@ class LoginPlugin extends Plugin
         // If authentication status is undefined, lower level event handlers may still be able to authenticate user.
     }
 
-    public function userLoginAuthorize(UserLoginEvent $event)
+    public function userLoginAuthorize(UserLoginEvent $event): void
     {
         // Always block access if authorize defaulting to site.login fails.
         $user = $event->getUser();
         foreach ($event->getAuthorize() as $authorize) {
             if (!$user->authorize($authorize)) {
-                if ($user->state !== 'enabled') {
+                // Match the default core `authorize()` applies (UserTrait,
+                // UserObject): an account with no explicit state is enabled.
+                if ($user->get('state', 'enabled') !== 'enabled') {
                     $event->setMessage($this->grav['language']->translate('PLUGIN_LOGIN.USER_ACCOUNT_DISABLED'), 'error');
                 }
                 $event->setStatus($event::AUTHORIZATION_DENIED);
@@ -1203,17 +2078,25 @@ class LoginPlugin extends Plugin
         }
     }
 
-    public function userLoginGuest(UserLoginEvent $event)
+    public function userLoginGuest(UserLoginEvent $event): void
     {
         /** @var UserCollectionInterface $users */
         $users = $this->grav['accounts'];
         $user = $users->load('');
 
         $event->setUser($user);
+
+        // A session waiting for its first write (system.session.lazy) holds nothing to
+        // clear, and a guest is not worth starting one for.
+        if (self::isSessionWaiting($this->grav['session'])) {
+            return;
+        }
+
+        unset($this->grav['session']->remember_me_pending);
         $this->grav['session']->user = $user;
     }
 
-    public function userLoginResetRateLimit(UserLoginEvent $event)
+    public function userLoginResetRateLimit(UserLoginEvent $event): void
     {
         if ($event->getOption('rate_limit')) {
             // Reset user rate limit.
@@ -1222,14 +2105,13 @@ class LoginPlugin extends Plugin
         }
     }
 
-    public function userLogin(UserLoginEvent $event)
+    public function userLogin(UserLoginEvent $event): void
     {
         /** @var SessionInterface $session */
         $session = $this->grav['session'];
 
-        // Prevent session fixation if supported.
-        // TODO: remove method_exists() test when requiring Grav v1.7
-        if (method_exists($session, 'regenerateId')) {
+        // Prevent session fixation.
+        if ($this->config->get('system.session.initialize', true)) {
             $session->regenerateId();
         }
 
@@ -1244,12 +2126,33 @@ class LoginPlugin extends Plugin
             // If the user wants to be remembered, create Rememberme cookie.
             $username = $user->get('username');
             if ($event->getCredential('rememberme')) {
-                $login->rememberMe()->createCookie($username);
+                if ($event->isDelayed()) {
+                    // Defer issuance until the second factor succeeds.
+                    $session->remember_me_pending = $username;
+                } else {
+                    $login->rememberMe()->createCookie($username);
+                }
             }
         }
     }
 
-    public function userLogout(UserLoginEvent $event)
+    /**
+     * Complete a deferred remember-me request after the second factor succeeds.
+     */
+    public function userLoginAuthorized(UserLoginEvent $event): void
+    {
+        /** @var SessionInterface $session */
+        $session = $this->grav['session'];
+        $pending = $session->remember_me_pending ?? null;
+        unset($session->remember_me_pending);
+
+        $username = (string)$event->getUser()->get('username');
+        if (is_string($pending) && $pending !== '' && hash_equals($pending, $username)) {
+            $this->grav['login']->rememberMe()->createCookie($username);
+        }
+    }
+
+    public function userLogout(UserLoginEvent $event): void
     {
         if ($event->getOption('remember_me')) {
             /** @var Login $login */
@@ -1268,21 +2171,277 @@ class LoginPlugin extends Plugin
         $session->invalidate()->start();
     }
 
+    /**
+     * @return string|false
+     * @deprecated 3.5.0 Use $grav['login']->getRoute('after_login') instead
+     */
     public static function defaultRedirectAfterLogin()
     {
-        $config = Grav::instance()['config'];
-        $redirect_after_login = $config->get('plugins.login.redirect_after_login');
-        $route_after_login = $config->get('plugins.login.route_after_login');
+        /** @var Login $login */
+        $login = Grav::instance()['login'] ?? null;
+        if (null === $login) {
+            return '/';
+        }
 
-        return is_bool($redirect_after_login) && $redirect_after_login == true ? $route_after_login : $redirect_after_login;
+        return $login->getRoute('after_login') ?? false;
     }
 
+    /**
+     * @return string|false
+     * @deprecated 3.5.0 Use $grav['login']->getRoute('after_logout') instead
+     */
     public static function defaultRedirectAfterLogout()
     {
-        $config = Grav::instance()['config'];
-        $redirect_after_logout = $config->get('plugins.login.redirect_after_logout');
-        $route_after_logout = $config->get('plugins.login.route_after_logout');
+        /** @var Login $login */
+        $login = Grav::instance()['login'] ?? null;
+        if (null === $login) {
+            return '/';
+        }
 
-        return is_bool($redirect_after_logout) && $redirect_after_logout == true ? $route_after_logout : $redirect_after_logout;
+        return $login->getRoute('after_logout') ?? false;
+    }
+
+    /**
+     * [onAdminTwigTemplatePaths] Admin-classic notice.
+     *
+     * Fires only in admin-classic. When neither plugins.login.site_host nor
+     * system.custom_base_url is set, password reset and activation email links
+     * are built from the (spoofable) request host (GHSA-46jp-rc59-w2gc). Surface
+     * a warning banner to the logged-in admin via the messages system so the
+     * weak configuration is visible to the person who can fix it.
+     *
+     * @return void
+     */
+    public function onAdminUntrustedHostNotice(): void
+    {
+        if (Email::isTrustedHostConfigured()) {
+            return;
+        }
+
+        $user = $this->grav['user'] ?? null;
+        if (!$user || !$user->authenticated || !$user->authorize('admin.login')) {
+            return;
+        }
+
+        $this->grav['messages']->add(
+            $this->grav['language']->translate('PLUGIN_LOGIN.UNTRUSTED_HOST_NOTICE'),
+            'warning'
+        );
+    }
+
+    /**
+     * [onApiDashboardNotifications] Admin-next (admin2) notice.
+     *
+     * Contributes the same untrusted-host warning as a persistent, dismissible
+     * dashboard banner in the `top` location. Dismissal and reappearance flow
+     * through the API plugin's standard notification handling.
+     *
+     * @param Event $event
+     * @return void
+     */
+    public function onApiDashboardNotifications(Event $event): void
+    {
+        if (Email::isTrustedHostConfigured()) {
+            return;
+        }
+
+        $notifications = $event['notifications'] ?? [];
+        $notifications['top'][] = [
+            'id'             => 'login-untrusted-host',
+            'date'           => date('c'),
+            'level'          => 'warning',
+            'icon'           => 'shield-alert',
+            'location'       => ['top'],
+            'message'        => $this->grav['language']->translate('PLUGIN_LOGIN.UNTRUSTED_HOST_NOTICE'),
+            'reappear_after' => '+7 days',
+        ];
+        $event['notifications'] = $notifications;
+    }
+
+    /**
+     * [onApiUserListColumns] Declare the "Login" column on the Admin Next Users list.
+     *
+     * Shows a badge on accounts currently locked out by the failed-login rate
+     * limiter, which is otherwise invisible to an administrator — the lockout
+     * lives in the cache, not on the account.
+     *
+     * @param Event $event
+     * @return void
+     */
+    public function onApiUserListColumns(Event $event): void
+    {
+        $columns = $event['columns'] ?? [];
+        $columns[] = [
+            'id' => 'login-lockout',
+            'plugin' => 'login',
+            'label' => $this->grav['language']->translate('PLUGIN_LOGIN.LOCKOUT_COLUMN_LABEL'),
+            'field' => 'login.lockout',
+            'formatter' => 'badge',
+            'sortable' => false,
+            'priority' => 10,
+            'authorize' => 'api.users.read',
+        ];
+        $event['columns'] = $columns;
+    }
+
+    /**
+     * [onApiUserListColumnData] Fill in the lockout badge for the served page of users.
+     *
+     * Resolves the whole locked set in one sweep and then looks each username up,
+     * so the cost is independent of how many users the page lists.
+     *
+     * @param Event $event
+     * @return void
+     */
+    public function onApiUserListColumnData(Event $event): void
+    {
+        $usernames = $event['usernames'] ?? [];
+        if (!is_array($usernames) || !$usernames) {
+            return;
+        }
+
+        $locked = $this->getLoginInstance()->getLockedAccounts();
+        if (!$locked) {
+            return;
+        }
+
+        $language = $this->grav['language'];
+        $data = $event['data'] ?? [];
+        foreach ($usernames as $username) {
+            if (!isset($locked[$username])) {
+                continue;
+            }
+
+            $data[$username]['login.lockout'] = $language->translate([
+                'PLUGIN_LOGIN.LOCKOUT_COLUMN_VALUE',
+                $locked[$username]['attempts'],
+            ]);
+        }
+        $event['data'] = $data;
+    }
+
+    /**
+     * [onApiUserListRowActions] Declare the per-user Unlock button.
+     *
+     * @param Event $event
+     * @return void
+     */
+    public function onApiUserListRowActions(Event $event): void
+    {
+        $actions = $event['actions'] ?? [];
+        $actions[] = [
+            'id' => 'login-unlock',
+            'plugin' => 'login',
+            'label' => $this->grav['language']->translate('PLUGIN_LOGIN.LOCKOUT_UNLOCK_LABEL'),
+            'icon' => 'fa-unlock',
+            'action' => 'unlock',
+            'priority' => 10,
+            'authorize' => 'api.users.write',
+        ];
+        $event['actions'] = $actions;
+    }
+
+    /**
+     * [onApiUserListRowAction] Clear an account's failed-login lockout.
+     *
+     * The API plugin re-checks this action's declared `authorize` against the
+     * caller before dispatching, and resolves the username against a real
+     * account, so by the time we get here the request is already vetted.
+     *
+     * @param Event $event
+     * @return void
+     */
+    public function onApiUserListRowAction(Event $event): void
+    {
+        if (($event['id'] ?? '') !== 'login-unlock') {
+            return;
+        }
+
+        $username = $event['username'] ?? '';
+        if (!is_string($username) || $username === '') {
+            return;
+        }
+
+        // This handler's own half of the row-action contract. Unlocking clears
+        // every rate limit standing against an account, so a caller who is not a
+        // super admin must not do it to one. The API plugin enforces the same
+        // floor before dispatching; this is the belt to its braces, and only ever
+        // runs underneath it, so ForbiddenException is always loaded by the time
+        // we could throw. (GHSA-985r-mpj8-5rqw)
+        $caller = $event['user'] ?? null;
+        $target = $this->grav['accounts']->load($username);
+        $callerIsSuper = $caller instanceof UserInterface
+            && ($caller->authorize('admin.super') === true || $caller->authorize('api.super') === true);
+        if ($target && $target->exists() && !$callerIsSuper && $this->accessGrantsSuper($target)) {
+            throw new ForbiddenException("Only super admins can clear a super admin account's lockout.");
+        }
+
+        $language = $this->grav['language'];
+        $cleared = $this->getLoginInstance()->unlockUser($username);
+
+        $event['result'] = [
+            'status' => 'success',
+            'message' => $cleared
+                ? $language->translate(['PLUGIN_LOGIN.LOCKOUT_UNLOCKED', $username])
+                : $language->translate(['PLUGIN_LOGIN.LOCKOUT_NOT_LOCKED', $username]),
+        ];
+    }
+
+    /**
+     * Does this account's own `access` map confer super-admin authority, under
+     * either flag? A classic `admin.super` account may not carry `api.super`, and
+     * vice versa, so both count.
+     *
+     * Reads the raw access map rather than calling authorize() on purpose: an
+     * account loaded from disk is neither authenticated nor authorized, so
+     * UserObject::authorize() returns false for it whatever its ACL actually
+     * says. This mirrors the API plugin's own accessGrantsSuper().
+     *
+     * @param UserInterface $user
+     * @return bool
+     */
+    protected function accessGrantsSuper(UserInterface $user): bool
+    {
+        // Own access map plus every group's. Core authorizes group access before
+        // the account's own, and a group carrying admin.super authorizes every
+        // action for its members, so an account that is super only by membership
+        // was invisible here while being fully super at authorization time
+        // (GHSA-vv8m-jqpm-38x4).
+        $maps = [$user->get('access')];
+        foreach ((array) $user->get('groups', []) as $group) {
+            if (is_string($group)) {
+                $maps[] = $this->grav['config']->get("groups.{$group}.access");
+            }
+        }
+
+        foreach ($maps as $access) {
+            if (!is_array($access)) {
+                continue;
+            }
+            foreach (['admin', 'api'] as $scope) {
+                if (!empty($access[$scope]['super']) || !empty($access["{$scope}.super"])) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The Login service, instantiated on demand.
+     *
+     * The Users list is served by the API plugin, which doesn't necessarily run
+     * the front-end bootstrap that registers `login` in the container.
+     *
+     * @return Login
+     */
+    protected function getLoginInstance(): Login
+    {
+        if (!isset($this->grav['login'])) {
+            $this->grav['login'] = new Login($this->grav);
+        }
+
+        return $this->grav['login'];
     }
 }

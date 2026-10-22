@@ -9,6 +9,7 @@ return [
 	|
 	| Clockwork is enabled by default only when your application is in debug mode. Here you can explicitly enable or
 	| disable Clockwork. When disabled, no data is collected and the api and web ui are inactive.
+	| Unless explicitly enabled, Clockwork only runs on localhost, *.local, *.test and *.wip domains.
 	|
 	*/
 
@@ -30,8 +31,11 @@ return [
 		'cache' => [
 			'enabled' => env('CLOCKWORK_CACHE_ENABLED', true),
 
-			// Collect cache queries including results (high performance impact with a high number of queries)
-			'collect_queries' => env('CLOCKWORK_CACHE_QUERIES', false)
+			// Collect cache queries
+			'collect_queries' => env('CLOCKWORK_CACHE_QUERIES', true),
+
+			// Collect values from cache queries (high performance impact with a very high number of queries)
+			'collect_values' => env('CLOCKWORK_CACHE_COLLECT_VALUES', false)
 		],
 
 		// Database usage stats and queries
@@ -47,13 +51,13 @@ return [
 			// Collect details of retrieved models (very high performance impact with a lot of models retrieved)
 			'collect_models_retrieved' => env('CLOCKWORK_DATABASE_COLLECT_MODELS_RETRIEVED', false),
 
-			// Query execution time threshold in miliseconds after which the query will be marked as slow
+			// Query execution time threshold in milliseconds after which the query will be marked as slow
 			'slow_threshold' => env('CLOCKWORK_DATABASE_SLOW_THRESHOLD'),
 
 			// Collect only slow database queries
 			'slow_only' => env('CLOCKWORK_DATABASE_SLOW_ONLY', false),
 
-			// Detect and report duplicate (N+1) queries
+			// Detect and report duplicate queries
 			'detect_duplicate_queries' => env('CLOCKWORK_DATABASE_DETECT_DUPLICATE_QUERIES', false)
 		],
 
@@ -66,6 +70,17 @@ return [
 				// App\Events\UserRegistered::class,
 				// 'user.registered'
 			],
+		],
+
+		// Sent HTTP requests
+		'http_requests' => [
+			'enabled' => env('CLOCKWORK_HTTP_REQUESTS_ENABLED', true),
+
+			// Collect structured request and response content (json and form data)
+			'collect_data' => env('CLOCKWORK_HTTP_REQUESTS_COLLECT_DATA', true),
+
+			// Collect raw request and response content (high storage usage with large responses)
+			'collect_raw_data' => env('CLOCKWORK_HTTP_REQUESTS_COLLECT_RAW_DATA', false)
 		],
 
 		// Laravel log (you can still log directly to Clockwork with laravel log disabled)
@@ -96,7 +111,10 @@ return [
 
 		// Routes list
 		'routes' => [
-			'enabled' => env('CLOCKWORK_ROUTES_ENABLED', false)
+			'enabled' => env('CLOCKWORK_ROUTES_ENABLED', false),
+
+			// Collect only routes from particular namespaces (only application routes by default)
+			'only_namespaces' => [ 'App' ]
 		],
 
 		// Rendered views
@@ -118,7 +136,7 @@ return [
 	| Enable web UI
 	|------------------------------------------------------------------------------------------------------------------
 	|
-	| Clockwork comes with a web UI accessibla via http://your.app/clockwork. Here you can enable or disable this
+	| Clockwork comes with a web UI accessible via http://your.app/clockwork. Here you can enable or disable this
 	| feature. You can also set a custom path for the web UI.
 	|
 	*/
@@ -156,19 +174,20 @@ return [
 		// Collect only errors (requests with HTTP 4xx and 5xx responses)
 		'errors_only' => env('CLOCKWORK_REQUESTS_ERRORS_ONLY', false),
 
-		// Response time threshold in miliseconds after which the request will be marked as slow
+		// Response time threshold in milliseconds after which the request will be marked as slow
 		'slow_threshold' => env('CLOCKWORK_REQUESTS_SLOW_THRESHOLD'),
 
 		// Collect only slow requests
 		'slow_only' => env('CLOCKWORK_REQUESTS_SLOW_ONLY', false),
 
-		// Sample the collected requests (eg. set to 100 to collect only 1 in 100 requests)
+		// Sample the collected requests (e.g. set to 100 to collect only 1 in 100 requests)
 		'sample' => env('CLOCKWORK_REQUESTS_SAMPLE', false),
 
 		// List of URIs that should not be collected
 		'except' => [
 			'/horizon/.*', // Laravel Horizon requests
 			'/telescope/.*', // Laravel Telescope requests
+			'/_tt/.*', // Laravel Telescope toolbar
 			'/_debugbar/.*', // Laravel DebugBar requests
 		],
 
@@ -262,7 +281,7 @@ return [
 	| Enable data collection when Clockwork is disabled
 	|------------------------------------------------------------------------------------------------------------------
 	|
-	| You can enable this setting to collect data even when Clockwork is disabled. Eg. for future analysis.
+	| You can enable this setting to collect data even when Clockwork is disabled, e.g. for future analysis.
 	|
 	*/
 
@@ -273,10 +292,10 @@ return [
 	| Metadata storage
 	|------------------------------------------------------------------------------------------------------------------
 	|
-	| Configure how is the metadata collected by Clockwork stored. Two options are available:
+	| Configure how is the metadata collected by Clockwork stored. Three options are available:
 	|   - files - A simple fast storage implementation storing data in one-per-request files.
-	|   - sql - Stores requests in a sql database. Supports MySQL, Postgresql, Sqlite and requires PDO.
-	|
+	|   - sql - Stores requests in a sql database. Supports MySQL, PostgreSQL and SQLite. Requires PDO.
+	|   - redis - Stores requests in redis. Requires phpredis.
 	*/
 
 	'storage' => env('CLOCKWORK_STORAGE', 'files'),
@@ -287,11 +306,17 @@ return [
 	// Compress the metadata files using gzip, trading a little bit of performance for lower disk usage
 	'storage_files_compress' => env('CLOCKWORK_STORAGE_FILES_COMPRESS', false),
 
-	// SQL database to use, can be a name of database configured in database.php or a path to a sqlite file
+	// SQL database to use, can be a name of database configured in database.php or a path to a SQLite file
 	'storage_sql_database' => env('CLOCKWORK_STORAGE_SQL_DATABASE', storage_path('clockwork.sqlite')),
 
-	// SQL table name to use, the table is automatically created and udpated when needed
+	// SQL table name to use, the table is automatically created and updated when needed
 	'storage_sql_table' => env('CLOCKWORK_STORAGE_SQL_TABLE', 'clockwork'),
+
+	// Redis connection, name of redis connection or cluster configured in database.php
+	'storage_redis' => env('CLOCKWORK_STORAGE_REDIS', 'default'),
+
+	// Redis prefix for Clockwork keys ("clockwork" if not set)
+	'storage_redis_prefix' => env('CLOCKWORK_STORAGE_REDIS_PREFIX', 'clockwork'),
 
 	// Maximum lifetime of collected metadata in minutes, older requests will automatically be deleted, false to disable
 	'storage_expiration' => env('CLOCKWORK_STORAGE_EXPIRATION', 60 * 24 * 7),
@@ -360,7 +385,7 @@ return [
 	// Maximum depth of serialized multi-level arrays and objects
 	'serialization_depth' => env('CLOCKWORK_SERIALIZATION_DEPTH', 10),
 
-	// A list of classes that will never be serialized (eg. a common service container class)
+	// A list of classes that will never be serialized (e.g. a common service container class)
 	'serialization_blackbox' => [
 		\Illuminate\Container\Container::class,
 		\Illuminate\Foundation\Application::class,
@@ -381,10 +406,10 @@ return [
 
 	/*
 	|------------------------------------------------------------------------------------------------------------------
-	| Send Headers for AJAX request
+	| Send headers for AJAX request
 	|------------------------------------------------------------------------------------------------------------------
 	|
-	| When trying to collect data the AJAX method can sometimes fail if it is missing required headers. For example, an
+	| When trying to collect data, the AJAX method can sometimes fail if it is missing required headers. For example, an
 	| API might require a version number using Accept headers to route the HTTP request to the correct codebase.
 	|
 	*/
@@ -395,11 +420,11 @@ return [
 
 	/*
 	|------------------------------------------------------------------------------------------------------------------
-	| Server-Timing
+	| Server timing
 	|------------------------------------------------------------------------------------------------------------------
 	|
 	| Clockwork supports the W3C Server Timing specification, which allows for collecting a simple performance metrics
-	| in a cross-browser way. Eg. in Chrome, your app, database and timeline event timings will be shown in the Dev
+	| in a cross-browser way. E.g. in Chrome, your app, database and timeline event timings will be shown in the Dev
 	| Tools network tab. This setting specifies the max number of timeline events that will be sent. Setting to false
 	| will disable the feature.
 	|

@@ -103,6 +103,7 @@ form:
                 "D, d M Y G:i:s": Date3
                 "d-m-y G:i": Date4
                 "jS M Y": Date5
+                "Y-m-d G:i": Date6
 
             pages.dateformat.long:
               type: dateformat
@@ -116,6 +117,7 @@ form:
                 "D, d M Y G:i:s": Date3
                 "d-m-y G:i": Date4
                 "jS M Y": Date5
+                "Y-m-d G:i:s": Date6
 
             pages.order.by:
               type: select
@@ -448,6 +450,17 @@ form:
               validate:
                 type: bool
 
+            languages.debug:
+              type: toggle
+              label: PLUGIN_ADMIN.LANGUAGE_DEBUG
+              help: PLUGIN_ADMIN.LANGUAGE_DEBUG_HELP
+              highlight: 0
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
         http_headers:
           type: tab
           title: PLUGIN_ADMIN.HTTP_HEADERS
@@ -608,7 +621,6 @@ form:
                 file: File
                 apc: APC
                 apcu: APCu
-                xcache: Xcache
                 memcache: Memcache
                 memcached: Memcached
                 wincache: WinCache
@@ -620,6 +632,19 @@ form:
               label: PLUGIN_ADMIN.CACHE_PREFIX
               help: PLUGIN_ADMIN.CACHE_PREFIX_HELP
               placeholder: PLUGIN_ADMIN.CACHE_PREFIX_PLACEHOLDER
+
+            cache.purge_max_age_days:
+                type: text
+                size: x-small
+                append: GRAV.NICETIME.DAY_PLURAL
+                label: PLUGIN_ADMIN.CACHE_PURGE_AGE
+                help: PLUGIN_ADMIN.CACHE_PURGE_AGE_HELP
+                validate:
+                    type: number
+                    min: 1
+                    max: 365
+                    step: 1
+                default: 30
 
             cache.purge_at:
               type: cron
@@ -646,7 +671,7 @@ form:
               type: toggle
               label: PLUGIN_ADMIN.CLEAR_IMAGES_BY_DEFAULT
               help: PLUGIN_ADMIN.CLEAR_IMAGES_BY_DEFAULT_HELP
-              highlight: 1
+              highlight: 0
               options:
                 1: PLUGIN_ADMIN.YES
                 0: PLUGIN_ADMIN.NO
@@ -888,9 +913,45 @@ form:
           title: PLUGIN_ADMIN.ASSETS
 
           fields:
-            assets_section:
+            general_config_section:
               type: section
-              title: PLUGIN_ADMIN.ASSETS
+              title: PLUGIN_ADMIN.GENERAL_CONFIG
+              underline: true
+
+            assets.enable_asset_timestamp:
+              type: toggle
+              label: PLUGIN_ADMIN.ENABLED_TIMESTAMPS_ON_ASSETS
+              help: PLUGIN_ADMIN.ENABLED_TIMESTAMPS_ON_ASSETS_HELP
+              highlight: 0
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
+            assets.enable_asset_sri:
+              type: toggle
+              label: PLUGIN_ADMIN.ENABLED_SRI_ON_ASSETS
+              help: PLUGIN_ADMIN.ENABLED_SRI_ON_ASSETS_HELP
+              highlight: 0
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
+            assets.collections:
+              type: multilevel
+              label: PLUGIN_ADMIN.COLLECTIONS
+              placeholder_key: collection_name
+              placeholder_value: collection_path
+              validate:
+                type: array
+
+
+            css_assets_section:
+              type: section
+              title: PLUGIN_ADMIN.CSS_ASSETS
               underline: true
 
             assets.css_pipeline:
@@ -959,6 +1020,11 @@ form:
               validate:
                 type: bool
 
+            js_assets_section:
+              type: section
+              title: PLUGIN_ADMIN.JS_ASSETS
+              underline: true
+
             assets.js_pipeline:
               type: toggle
               label: PLUGIN_ADMIN.JAVASCRIPT_PIPELINE
@@ -1003,10 +1069,15 @@ form:
               validate:
                 type: bool
 
-            assets.enable_asset_timestamp:
+            js_module_assets_section:
+              type: section
+              title: PLUGIN_ADMIN.JS_MODULE_ASSETS
+              underline: true
+
+            assets.js_module_pipeline:
               type: toggle
-              label: PLUGIN_ADMIN.ENABLED_TIMESTAMPS_ON_ASSETS
-              help: PLUGIN_ADMIN.ENABLED_TIMESTAMPS_ON_ASSETS_HELP
+              label: PLUGIN_ADMIN.JAVASCRIPT_MODULE_PIPELINE
+              help: PLUGIN_ADMIN.JAVASCRIPT_MODULE_PIPELINE_HELP
               highlight: 0
               options:
                 1: PLUGIN_ADMIN.YES
@@ -1014,24 +1085,29 @@ form:
               validate:
                 type: bool
 
-            assets.enable_asset_sri:
+            assets.js_module_pipeline_include_externals:
               type: toggle
-              label: PLUGIN_ADMIN.ENABLED_SRI_ON_ASSETS
-              help: PLUGIN_ADMIN.ENABLED_SRI_ON_ASSETS_HELP
-              highlight: 0
+              label: PLUGIN_ADMIN.JAVASCRIPT_MODULE_PIPELINE_INCLUDE_EXTERNALS
+              help: PLUGIN_ADMIN.JAVASCRIPT_MODULE_PIPELINE_INCLUDE_EXTERNALS_HELP
+              highlight: 1
               options:
                 1: PLUGIN_ADMIN.YES
                 0: PLUGIN_ADMIN.NO
               validate:
                 type: bool
 
-            assets.collections:
-              type: multilevel
-              label: PLUGIN_ADMIN.COLLECTIONS
-              placeholder_key: collection_name
-              placeholder_value: collection_path
+            assets.js_module_pipeline_before_excludes:
+              type: toggle
+              label: PLUGIN_ADMIN.JAVASCRIPT_MODULE_PIPELINE_BEFORE_EXCLUDES
+              help: PLUGIN_ADMIN.JAVASCRIPT_MODULE_PIPELINE_BEFORE_EXCLUDES_HELP
+              highlight: 1
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
               validate:
-                type: array
+                type: bool
+
+
 
         errors:
           type: tab
@@ -1105,6 +1181,13 @@ form:
                 local6: local6
                 local7: local7
 
+            log.syslog.tag:
+              type: text
+              size: small
+              label: PLUGIN_ADMIN.SYSLOG_TAG
+              help: PLUGIN_ADMIN.SYSLOG_TAG_HELP
+              placeholder: "grav"
+
         debugger:
           type: tab
           title: PLUGIN_ADMIN.DEBUGGER
@@ -1147,6 +1230,13 @@ form:
               validate:
                 type: bool
 
+            debugger.token:
+              type: text
+              size: medium
+              label: PLUGIN_ADMIN.DEBUGGER_TOKEN
+              help: PLUGIN_ADMIN.DEBUGGER_TOKEN_HELP
+              autocomplete: 'off'
+
             debugger.shutdown.close_connection:
               type: toggle
               label: PLUGIN_ADMIN.SHUTDOWN_CLOSE_CONNECTION
@@ -1167,6 +1257,16 @@ form:
               type: section
               title: PLUGIN_ADMIN.MEDIA
               underline: true
+
+            images.adapter:
+              type: select
+              size: small
+              label: PLUGIN_ADMIN.IMAGE_ADAPTER
+              help: PLUGIN_ADMIN.IMAGE_ADAPTER_HELP
+              highlight: gd
+              options:
+                  gd: GD (PHP built-in)
+                  imagick: Imagick
 
             images.default_image_quality:
               type: range
@@ -1230,6 +1330,28 @@ form:
                 auto: Auto
                 lazy: Lazy
                 eager: Eager
+            
+            images.defaults.decoding:
+              type: select
+              size: small
+              label: PLUGIN_ADMIN.IMAGES_DECODING
+              help: PLUGIN_ADMIN.IMAGES_DECODING_HELP
+              highlight: auto
+              options:
+                auto: Auto
+                sync: Sync
+                async: Async
+            
+            images.defaults.fetchpriority:
+              type: select
+              size: small
+              label: PLUGIN_ADMIN.IMAGES_FETCHPRIORITY
+              help: PLUGIN_ADMIN.IMAGES_FETCHPRIORITY_HELP
+              highlight: auto
+              options:
+                auto: Auto
+                high: High
+                low: Low
 
             images.seofriendly:
               type: toggle
@@ -1241,6 +1363,26 @@ form:
                 0: PLUGIN_ADMIN.NO
               validate:
                 type: bool
+
+            images.url_actions:
+              type: toggle
+              label: PLUGIN_ADMIN.IMAGES_URL_ACTIONS
+              help: PLUGIN_ADMIN.IMAGES_URL_ACTIONS_HELP
+              highlight: 0
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
+            images.max_pixels:
+              type: text
+              size: small
+              label: PLUGIN_ADMIN.IMAGES_MAX_PIXELS
+              help: PLUGIN_ADMIN.IMAGES_MAX_PIXELS_HELP
+              validate:
+                type: int
+                min: 0
 
             media.enable_media_timestamp:
               type: toggle
@@ -1281,6 +1423,45 @@ form:
               classes: fancy
               validate:
                 type: commalist
+
+            section_images_cls:
+              type: section
+              title: PLUGIN_ADMIN.IMAGES_CLS_TITLE
+              underline: true
+
+            images.cls.auto_sizes:
+              type: toggle
+              label: PLUGIN_ADMIN.IMAGES_CLS_AUTO_SIZES
+              help: PLUGIN_ADMIN.IMAGES_CLS_AUTO_SIZES_HELP
+              highlight: 0
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
+            images.cls.aspect_ratio:
+              type: toggle
+              label: PLUGIN_ADMIN.IMAGES_CLS_ASPECT_RATIO
+              help: PLUGIN_ADMIN.IMAGES_CLS_ASPECT_RATIO_HELP
+              highlight: 0
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
+            images.cls.retina_scale:
+              type: select
+              label: PLUGIN_ADMIN.IMAGES_CLS_RETINA_SCALE
+              help: PLUGIN_ADMIN.IMAGES_CLS_RETINA_SCALE_HELP
+              size: small
+              highlight: 1
+              options:
+                1: 1X
+                2: 2X
+                3: 3X
+                4: 4X
 
         session:
           type: tab
@@ -1355,6 +1536,18 @@ form:
               validate:
                 type: bool
 
+            session.secure_https:
+              type: toggle
+              label: PLUGIN_ADMIN.SESSION_SECURE_HTTPS
+              help: PLUGIN_ADMIN.SESSION_SECURE_HTTPS_HELP
+              highlight: 1
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              default: true
+              validate:
+                type: bool
+
             session.httponly:
               type: toggle
               label: PLUGIN_ADMIN.SESSION_HTTPONLY
@@ -1407,6 +1600,10 @@ form:
               title: PLUGIN_ADMIN.ADVANCED
               underline: true
 
+            gpm_section:
+              type: section
+              title: PLUGIN_ADMIN.GPM_SECTION
+
             gpm.releases:
               type: toggle
               label: PLUGIN_ADMIN.GPM_RELEASES
@@ -1415,23 +1612,6 @@ form:
               options:
                 stable: PLUGIN_ADMIN.STABLE
                 testing: PLUGIN_ADMIN.TESTING
-
-            gpm.proxy_url:
-              type: text
-              size: medium
-              placeholder: "e.g. 127.0.0.1:3128"
-              label: PLUGIN_ADMIN.PROXY_URL
-              help: PLUGIN_ADMIN.PROXY_URL_HELP
-
-            gpm.method:
-              type: toggle
-              label: PLUGIN_ADMIN.GPM_METHOD
-              highlight: auto
-              help: PLUGIN_ADMIN.GPM_METHOD_HELP
-              options:
-                auto: PLUGIN_ADMIN.AUTO
-                fopen: PLUGIN_ADMIN.FOPEN
-                curl: PLUGIN_ADMIN.CURL
 
             gpm.official_gpm_only:
               type: toggle
@@ -1445,16 +1625,79 @@ form:
               validate:
                 type: bool
 
-            gpm.verify_peer:
+            http_section:
+              type: section
+              title: PLUGIN_ADMIN.HTTP_SECTION
+
+            http.method:
               type: toggle
-              label: PLUGIN_ADMIN.GPM_VERIFY_PEER
+              label: PLUGIN_ADMIN.GPM_METHOD
+              highlight: auto
+              help: PLUGIN_ADMIN.GPM_METHOD_HELP
+              options:
+                auto: PLUGIN_ADMIN.AUTO
+                fopen: PLUGIN_ADMIN.FOPEN
+                curl: PLUGIN_ADMIN.CURL
+
+            http.enable_proxy:
+              type: toggle
+              label: PLUGIN_ADMIN.SSL_ENABLE_PROXY
               highlight: 1
-              help: PLUGIN_ADMIN.GPM_VERIFY_PEER_HELP
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              default: false
+              validate:
+                type: bool
+
+            http.proxy_url:
+              type: text
+              size: medium
+              placeholder: "e.g. 127.0.0.1:3128"
+              label: PLUGIN_ADMIN.PROXY_URL
+              help: PLUGIN_ADMIN.PROXY_URL_HELP
+
+            http.proxy_cert_path:
+              type: text
+              size: medium
+              placeholder: "e.g. /Users/bob/certs/"
+              label: PLUGIN_ADMIN.PROXY_CERT
+              help: PLUGIN_ADMIN.PROXY_CERT_HELP
+
+            http.verify_peer:
+              type: toggle
+              label: PLUGIN_ADMIN.SSL_VERIFY_PEER
+              highlight: 1
+              help: PLUGIN_ADMIN.SSL_VERIFY_PEER_HELP
               options:
                 1: PLUGIN_ADMIN.YES
                 0: PLUGIN_ADMIN.NO
               validate:
                 type: bool
+
+            http.verify_host:
+              type: toggle
+              label: PLUGIN_ADMIN.SSL_VERIFY_HOST
+              highlight: 1
+              help: PLUGIN_ADMIN.SSL_VERIFY_HOST_HELP
+              options:
+                1: PLUGIN_ADMIN.YES
+                0: PLUGIN_ADMIN.NO
+              validate:
+                type: bool
+
+            http.concurrent_connections:
+              type: number
+              size: x-small
+              label: PLUGIN_ADMIN.HTTP_CONNECTIONS
+              help: PLUGIN_ADMIN.HTTP_CONNECTIONS_HELP
+              validate:
+                min: 1
+                max: 20
+
+            misc_section:
+              type: section
+              title: PLUGIN_ADMIN.MISC_SECTION
 
             reverse_proxy_setup:
               type: toggle
@@ -1634,35 +1877,15 @@ form:
               validate:
                 type: bool
 
-        experimental:
+
+        accounts:
           type: tab
-          title: PLUGIN_ADMIN.EXPERIMENTAL
+          title: PLUGIN_ADMIN.ACCOUNTS
 
           fields:
-            experimental_section:
-              type: section
-              title: PLUGIN_ADMIN.EXPERIMENTAL
-              underline: true
-
-#            flex_pages:
-#              type: section
-#              title: Flex Pages
-#
-#            pages.type:
-#              type: select
-#              label: PLUGIN_ADMIN.PAGES_TYPE
-#              highlight: regular
-#              help: PLUGIN_ADMIN.PAGES_TYPE_HELP
-#              options:
-#                regular: PLUGIN_ADMIN.REGULAR
-#                flex: PLUGIN_ADMIN.FLEX
-
-            pages.type:
-              type: hidden
-
             flex_accounts:
               type: section
-              title: Flex Accounts
+              title: User Accounts
 
             accounts.type:
               type: select
@@ -1681,3 +1904,41 @@ form:
               options:
                 file: PLUGIN_ADMIN.FILE
                 folder: PLUGIN_ADMIN.FOLDER
+
+            accounts.avatar:
+              type: select
+              label: PLUGIN_ADMIN.AVATAR
+              default: gravatar
+              help: PLUGIN_ADMIN.AVATAR_HELP
+              options:
+                multiavatar: Multiavatar [local]
+                gravatar: Gravatar [external]
+
+#        experimental:
+#          type: tab
+#          title: PLUGIN_ADMIN.EXPERIMENTAL
+#
+#          fields:
+#            experimental_section:
+#              type: section
+#              title: PLUGIN_ADMIN.EXPERIMENTAL
+#              underline: true
+#
+#            flex_pages:
+#              type: section
+#              title: Flex Pages
+#
+#            pages.type:
+#              type: select
+#              label: PLUGIN_ADMIN.PAGES_TYPE
+#              highlight: regular
+#              help: PLUGIN_ADMIN.PAGES_TYPE_HELP
+#              options:
+#                regular: PLUGIN_ADMIN.REGULAR
+#                flex: PLUGIN_ADMIN.FLEX
+#
+#            pages.type:
+#              type: hidden
+
+
+

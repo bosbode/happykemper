@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -17,13 +17,12 @@ use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Page\Pages;
 use Grav\Common\Utils;
 use Grav\Common\Yaml;
-use Grav\Framework\Cache\CacheInterface;
 use Grav\Framework\File\Formatter\MarkdownFormatter;
 use Grav\Framework\File\Formatter\YamlFormatter;
 use Grav\Framework\Filesystem\Filesystem;
-use Grav\Framework\Flex\FlexDirectory;
 use Grav\Framework\Flex\Interfaces\FlexCollectionInterface;
 use Grav\Framework\Flex\Interfaces\FlexIndexInterface;
+use Grav\Framework\Flex\Pages\FlexPageCollection;
 use Grav\Framework\Flex\Pages\FlexPageIndex;
 use Grav\Framework\Flex\Pages\FlexPageObject;
 use InvalidArgumentException;
@@ -300,7 +299,7 @@ trait PageLegacyTrait
 
         $parentStorageKey = ltrim($filesystem->dirname("/{$this->getMasterKey()}"), '/');
 
-        /** @var FlexPageIndex $index */
+        /** @var FlexPageIndex<FlexPageObject,FlexPageCollection<FlexPageObject>> $index */
         $index = $this->getFlexDirectory()->getIndex();
 
         if ($parent) {
@@ -320,15 +319,24 @@ trait PageLegacyTrait
 
         // Find non-existing key.
         $parentKey = $parent ? $parent->getKey() : '';
-        $key = trim($parentKey . '/' . basename($this->getKey()), '/');
-        $key = preg_replace('/-\d+$/', '', $key);
-        $i = 1;
-        do {
-            $i++;
-            $test = "{$key}-{$i}";
-        } while ($index->containsKey($test));
-        $key = $test;
-        $folder = basename($key);
+        if ($this instanceof FlexPageObject) {
+            $key = trim($parentKey . '/' . $this->folder(), '/');
+            $key = preg_replace(static::PAGE_ORDER_PREFIX_REGEX, '', $key);
+            \assert(is_string($key));
+        } else {
+            $key = trim($parentKey . '/' . Utils::basename($this->getKey()), '/');
+        }
+
+        if ($index->containsKey($key)) {
+            $key = preg_replace('/\d+$/', '', $key);
+            $i = 1;
+            do {
+                $i++;
+                $test = "{$key}{$i}";
+            } while ($index->containsKey($test));
+            $key = $test;
+        }
+        $folder = Utils::basename($key);
 
         // Get the folder name.
         $order = $this->getProperty('order');
@@ -358,9 +366,14 @@ trait PageLegacyTrait
      */
     public function blueprintName(): string
     {
-        $blueprint_name = filter_input(INPUT_POST, 'blueprint', FILTER_SANITIZE_STRING) ?: $this->template();
+        if (!isset($_POST['blueprint'])) {
+            return $this->template();
+        }
 
-        return $blueprint_name;
+        $post_value = $_POST['blueprint'];
+        $sanitized_value = htmlspecialchars(strip_tags($post_value), ENT_QUOTES, 'UTF-8');
+
+        return $sanitized_value ?: $this->template();
     }
 
     /**
@@ -531,7 +544,7 @@ trait PageLegacyTrait
         if ($language) {
             $language = '.' . $language;
         }
-        $format = '.' . ($this->getProperty('format') ?? pathinfo($this->name(), PATHINFO_EXTENSION));
+        $format = '.' . ($this->getProperty('format') ?? Utils::pathinfo($this->name(), PATHINFO_EXTENSION));
 
         return $language . $format;
     }

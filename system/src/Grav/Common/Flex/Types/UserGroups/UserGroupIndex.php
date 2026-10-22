@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -17,7 +17,7 @@ use Grav\Common\Flex\FlexIndex;
  * Class GroupIndex
  * @package Grav\Common\User\FlexUser
  *
- * @extends FlexIndex<string,UserGroupObject,UserGroupCollection>
+ * @extends FlexIndex<UserGroupObject,UserGroupCollection>
  */
 class UserGroupIndex extends FlexIndex
 {

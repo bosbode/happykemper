@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -127,7 +127,6 @@ class Cache extends Getters
      */
     public function init(Grav $grav)
     {
-        /** @var Config $config */
         $this->config = $grav['config'];
         $this->now = time();
 
@@ -142,7 +141,7 @@ class Cache extends Getters
         $uniqueness = substr(md5($uri->rootUrl(true) . $this->config->key() . GRAV_VERSION), 2, 8);
 
         // Cache key allows us to invalidate all cache on configuration changes.
-        $this->key = ($prefix ? $prefix : 'g') . '-' . $uniqueness;
+        $this->key = ($prefix ?: 'g') . '-' . $uniqueness;
         $this->cache_dir = $grav['locator']->findResource('cache://doctrine/' . $uniqueness, true, true);
         $this->driver_setting = $this->config->get('system.cache.driver');
         $this->driver = $this->getCacheDriver();
@@ -171,24 +170,75 @@ class Cache extends Getters
     }
 
     /**
-     * Deletes the old out of date file-based caches
+     * Deletes old cache files based on age
      *
      * @return int
      */
     public function purgeOldCache()
     {
-        $cache_dir = dirname($this->cache_dir);
-        $current = basename($this->cache_dir);
+        // Get the max age for cache files from config (default 30 days)
+        $max_age_days = $this->config->get('system.cache.purge_max_age_days', 30);
+        $max_age_seconds = $max_age_days * 86400; // Convert days to seconds
+        $now = time();
         $count = 0;
-
+        
+        // First, clean up old orphaned cache directories (not the current one)
+        $cache_dir = dirname($this->cache_dir);
+        $current = Utils::basename($this->cache_dir);
+        
         foreach (new DirectoryIterator($cache_dir) as $file) {
             $dir = $file->getBasename();
             if ($dir === $current || $file->isDot() || $file->isFile()) {
                 continue;
             }
-
-            Folder::delete($file->getPathname());
-            $count++;
+            
+            // Check if directory is old and empty or very old (90+ days)
+            $dir_age = $now - $file->getMTime();
+            if ($dir_age > 7776000) { // 90 days
+                Folder::delete($file->getPathname());
+                $count++;
+            }
+        }
+        
+        // Now clean up old cache files within the current cache directory
+        if (is_dir($this->cache_dir)) {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($this->cache_dir, \RecursiveDirectoryIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+            
+            foreach ($iterator as $file) {
+                if ($file->isFile()) {
+                    $file_age = $now - $file->getMTime();
+                    if ($file_age > $max_age_seconds) {
+                        @unlink($file->getPathname());
+                        $count++;
+                    }
+                }
+            }
+        }
+        
+        // Also clean up old files in compiled cache
+        $grav = Grav::instance();
+        $compiled_dir = $this->config->get('system.cache.compiled_dir', 'cache://compiled');
+        $compiled_path = $grav['locator']->findResource($compiled_dir, true);
+        
+        if ($compiled_path && is_dir($compiled_path)) {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($compiled_path, \RecursiveDirectoryIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+            
+            foreach ($iterator as $file) {
+                if ($file->isFile()) {
+                    $file_age = $now - $file->getMTime();
+                    // Compiled files can be kept longer (60 days)
+                    if ($file_age > ($max_age_seconds * 2)) {
+                        @unlink($file->getPathname());
+                        $count++;
+                    }
+                }
+            }
         }
 
         return $count;
@@ -619,11 +669,7 @@ class Cache extends Getters
      */
     public function isVolatileDriver($setting)
     {
-        if (in_array($setting, ['apc', 'apcu', 'xcache', 'wincache'])) {
-            return true;
-        }
-
-        return false;
+        return in_array($setting, ['apc', 'apcu', 'xcache', 'wincache'], true);
     }
 
     /**
@@ -637,8 +683,10 @@ class Cache extends Getters
     {
         /** @var Cache $cache */
         $cache = Grav::instance()['cache'];
-        $deleted_folders = $cache->purgeOldCache();
-        $msg = 'Purged ' . $deleted_folders . ' old cache folders...';
+        $deleted_items = $cache->purgeOldCache();
+        
+        $max_age = $cache->config->get('system.cache.purge_max_age_days', 30);
+        $msg = 'Purged ' . $deleted_items . ' old cache items (files older than ' . $max_age . ' days)';
 
         if ($echo) {
             echo $msg;

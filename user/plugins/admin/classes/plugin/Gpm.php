@@ -1,5 +1,12 @@
 <?php
 
+/**
+ * @package    Grav\Plugin\Admin
+ *
+ * @copyright  Copyright (c) 2015 - 2024 Trilby Media, LLC. All rights reserved.
+ * @license    MIT License; see LICENSE file for details.
+ */
+
 namespace Grav\Plugin\Admin;
 
 use Grav\Common\Cache;
@@ -7,8 +14,8 @@ use Grav\Common\Grav;
 use Grav\Common\GPM\GPM as GravGPM;
 use Grav\Common\GPM\Licenses;
 use Grav\Common\GPM\Installer;
-use Grav\Common\GPM\Response;
 use Grav\Common\GPM\Upgrader;
+use Grav\Common\HTTP\Response;
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\GPM\Common\Package;
 
@@ -118,6 +125,8 @@ class Gpm
             }
         }
 
+        Cache::clearCache();
+
         return $messages ?: true;
     }
 
@@ -189,6 +198,8 @@ class Gpm
                 }
             }
         }
+
+        Cache::clearCache();
 
         return true;
     }
@@ -277,6 +288,7 @@ class Gpm
         }
 
         Folder::delete($tmp_zip);
+        Cache::clearCache();
 
         return true;
     }
@@ -311,7 +323,7 @@ class Gpm
 
         $bad_chars = array_merge(array_map('chr', range(0, 31)), ['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 
-        $filename = $package->slug . str_replace($bad_chars, '', basename($package->zipball_url));
+        $filename = $package->slug . str_replace($bad_chars, '', \Grav\Common\Utils::basename($package->zipball_url));
         $filename = preg_replace('/[\\\\\/:"*?&<>|]+/m', '-', $filename);
 
         file_put_contents($tmp_dir . DS . $filename . '.zip', $contents);
@@ -358,7 +370,7 @@ class Gpm
             $error[] = '<p>Grav has increased the minimum PHP requirement.<br />';
             $error[] = 'You are currently running PHP <strong>' . phpversion() . '</strong>';
             $error[] = ', but PHP <strong>' . $upgrader->minPHPVersion() . '</strong> is required.</p>';
-            $error[] = '<p><a href="http://getgrav.org/blog/changing-php-requirements-to-5.5" class="button button-small secondary">Additional information</a></p>';
+            $error[] = '<p><a href="https://getgrav.org/blog/changing-php-requirements-to-5.5" class="button button-small secondary">Additional information</a></p>';
 
             Installer::setError(implode("\n", $error));
 
@@ -411,6 +423,25 @@ class Gpm
             $script = $folder . '/system/install.php';
             /** Install $installer */
             if ((file_exists($script) && $install = include $script) && is_callable($install)) {
+                // Run preflight from the NEW package's installer if available
+                if (is_object($install) && method_exists($install, 'generatePreflightReport')) {
+                    $report = $install->generatePreflightReport();
+                    $blocking = $report['blocking'] ?? [];
+                    $incompatible = $report['incompatible_packages'] ?? [];
+
+                    if (!empty($blocking) || !empty($incompatible['blocking'])) {
+                        $errors = [];
+                        foreach ($blocking as $reason) {
+                            $errors[] = $reason;
+                        }
+                        foreach ($incompatible['blocking'] ?? [] as $slug => $info) {
+                            $errors[] = sprintf('<strong>%s</strong> (%s v%s) — not compatible with Grav %s. Disable it to proceed.',
+                                $slug, $info['type'] ?? 'plugin', $info['version'] ?? '?', $incompatible['target'] ?? '?');
+                        }
+                        Installer::setError(implode('<br>', $errors));
+                        return;
+                    }
+                }
                 $install($zip);
             } else {
                 Installer::install(

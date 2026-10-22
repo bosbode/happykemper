@@ -34,6 +34,9 @@ form:
                 type: markdown
                 validate:
                   type: textarea
+                  # Page body has no length ceiling: `0` opts out of the default
+                  # multiline guard, which used to reject long pages (#3643).
+                  max: 0
 
             header.media_order:
               type: pagemedia
@@ -121,7 +124,7 @@ form:
                       underline: true
 
                     folder:
-                      type: text
+                      type: folder-slug
                       label: PLUGIN_ADMIN.FOLDER_NAME
                       validate:
                         rule: slug
@@ -319,6 +322,18 @@ form:
               underline: true
 
               fields:
+
+                header.redirect_default_route:
+                  type: toggle
+                  toggleable: true
+                  label: PLUGIN_ADMIN.REDIRECT_DEFAULT_ROUTE
+                  help: PLUGIN_ADMIN.REDIRECT_DEFAULT_ROUTE_HELP
+                  config-highlight@: system.pages.redirect_default_route
+                  options:
+                    1: PLUGIN_ADMIN.YES
+                    0: PLUGIN_ADMIN.NO
+                  validate:
+                    type: bool
 
                 header.routes.default:
                   type: text

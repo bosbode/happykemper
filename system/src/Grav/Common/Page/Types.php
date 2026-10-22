@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,6 +12,7 @@ namespace Grav\Common\Page;
 use Grav\Common\Data\Blueprint;
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\Grav;
+use Grav\Common\Utils;
 use InvalidArgumentException;
 use RocketTheme\Toolbox\ArrayTraits\ArrayAccess;
 use RocketTheme\Toolbox\ArrayTraits\Constructor;
@@ -61,7 +62,7 @@ class Types implements \ArrayAccess, \Iterator, \Countable
      */
     public function init()
     {
-        if (null === $this->systemBlueprints) {
+        if (empty($this->systemBlueprints)) {
             // Register all blueprints from the blueprints stream.
             $this->systemBlueprints = $this->findBlueprints('blueprints://pages');
             foreach ($this->systemBlueprints as $type => $blueprint) {
@@ -144,7 +145,7 @@ class Types implements \ArrayAccess, \Iterator, \Countable
             if (strpos($name, 'modular/') !== 0) {
                 continue;
             }
-            $list[$name] = ucfirst(trim(str_replace('_', ' ', basename($name))));
+            $list[$name] = ucfirst(trim(str_replace('_', ' ', Utils::basename($name))));
         }
         ksort($list);
 

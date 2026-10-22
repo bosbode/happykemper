@@ -3,13 +3,15 @@
 /**
  * @package    Grav\Common\Helpers
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\Helpers;
 
 use DateTime;
+use DateMalformedStringException;
+
 use function array_slice;
 use function is_array;
 use function is_string;
@@ -21,7 +23,7 @@ use function is_string;
 class LogViewer
 {
     /** @var string */
-    protected $pattern = '/\[(?P<date>.*)\] (?P<logger>\w+).(?P<level>\w+): (?P<message>.*[^ ]+) (?P<context>[^ ]+) (?P<extra>[^ ]+)/';
+    protected $pattern = '/\[(?P<date>.*?)\] (?P<logger>\w+)\.(?P<level>\w+): (?P<message>.*[^ ]+) (?P<context>[^ ]+) (?P<extra>[^ ]+)/';
 
     /**
      * Get the objects of a tailed file
@@ -53,7 +55,6 @@ class LogViewer
      */
     public function tail($filepath, $lines = 1)
     {
-
         $f = $filepath ? @fopen($filepath, 'rb') : false;
         if ($f === false) {
             return false;
@@ -62,13 +63,12 @@ class LogViewer
         $buffer = ($lines < 2 ? 64 : ($lines < 10 ? 512 : 4096));
 
         fseek($f, -1, SEEK_END);
-        if (fread($f, 1) != "\n") {
-            $lines -= 1;
+        if (fread($f, 1) !== "\n") {
+            --$lines;
         }
 
         // Start reading
         $output = '';
-        $chunk = '';
         // While we would like more
         while (ftell($f) > 0 && $lines >= 0) {
             // Figure out how far back we should jump
@@ -76,7 +76,11 @@ class LogViewer
             // Do the jump (backwards, relative to where we are)
             fseek($f, -$seek, SEEK_CUR);
             // Read a chunk and prepend it to our output
-            $output = ($chunk = fread($f, $seek)) . $output;
+            $chunk = fread($f, $seek);
+            if ($chunk === false) {
+                throw new \RuntimeException('Cannot read file');
+            }
+            $output = $chunk . $output;
             // Jump back to where we started reading
             fseek($f, -mb_strlen($chunk, '8bit'), SEEK_CUR);
             // Decrease our line counter
@@ -123,13 +127,13 @@ class LogViewer
      */
     public function parse($line)
     {
-        if (!is_string($line) || strlen($line) === 0) {
-            return array();
+        if (!is_string($line) || $line === '') {
+            return [];
         }
 
         preg_match($this->pattern, $line, $data);
         if (!isset($data['date'])) {
-            return array();
+            return [];
         }
 
         preg_match('/(.*)- Trace:(.*)/', $data['message'], $matches);
@@ -138,15 +142,21 @@ class LogViewer
             $data['trace'] = trim($matches[2]);
         }
 
-        return array(
-            'date' => DateTime::createFromFormat('Y-m-d H:i:s', $data['date']),
+        try {
+            $date = new DateTime($data['date']);
+        } catch (DateMalformedStringException $e) {
+            $date = null;
+        }
+
+        return [
+            'date' => $date,
             'logger' => $data['logger'],
             'level' => $data['level'],
             'message' => $data['message'],
-            'trace' => isset($data['trace']) ? $this->parseTrace($data['trace']) : null,
+            'trace' => isset($data['trace']) ? self::parseTrace($data['trace']) : null,
             'context' => json_decode($data['context'], true),
             'extra' => json_decode($data['extra'], true)
-        );
+        ];
     }
 
     /**

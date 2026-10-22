@@ -32,8 +32,24 @@ xss_dangerous_tags:
     - base
 uploads_dangerous_extensions:
     - php
+    - php2
+    - php3
+    - php4
+    - php5
+    - phar
+    - phtml
     - html
     - htm
+    - shtml
+    - shtm
     - js
     - exe
+    # Page-content extensions: writing these into a page directory turns
+    # an upload into arbitrary page-content takeover (GHSA-w4rc-p66m-x6qq).
+    - md
+    - yaml
+    - yml
+    - json
+    - twig
+    - ini
 sanitize_svg: true

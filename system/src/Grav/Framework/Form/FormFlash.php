@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Form
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -30,6 +30,8 @@ class FormFlash implements FormFlashInterface
 {
     /** @var bool */
     protected $exists;
+    /** @var string */
+    protected $id;
     /** @var string */
     protected $sessionId;
     /** @var string */
@@ -75,8 +77,14 @@ class FormFlash implements FormFlashInterface
             });
         }
 
-        $this->sessionId = $config['session_id'] ?? 'no-session';
-        $this->uniqueId = $config['unique_id'] ?? '';
+        $this->id = $config['id'] ?? '';
+        // Session and unique ids build the flash folder (tmp://forms/<sessionId>/<uniqueId>), and the
+        // unique id arrives from the request (__unique_form_id__). Anything outside a strict allowlist
+        // blanks out, which disables flash storage for the request instead of writing outside tmp://forms.
+        $this->sessionId = self::sanitizeId($config['session_id'] ?? '');
+        $this->uniqueId = self::sanitizeId($config['unique_id'] ?? '');
+
+        $this->setUser($config['user'] ?? null);
 
         $folder = $config['folder'] ?? ($this->sessionId ? 'tmp://forms/' . $this->sessionId : '');
 
@@ -120,7 +128,7 @@ class FormFlash implements FormFlashInterface
     protected function loadStoredForm(): ?array
     {
         $file = $this->getTmpIndex();
-        $exists = $file->exists();
+        $exists = $file && $file->exists();
 
         $data = null;
         if ($exists) {
@@ -131,6 +139,14 @@ class FormFlash implements FormFlashInterface
         }
 
         return $data;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function getId(): string
+    {
+        return $this->id && $this->uniqueId ? $this->id . '/' . $this->uniqueId : '';
     }
 
     /**
@@ -246,8 +262,10 @@ class FormFlash implements FormFlashInterface
         if ($force || $this->data || $this->files) {
             // Only save if there is data or files to be saved.
             $file = $this->getTmpIndex();
-            $file->save($this->jsonSerialize());
-            $this->exists = true;
+            if ($file) {
+                $file->save($this->jsonSerialize());
+                $this->exists = true;
+            }
         } elseif ($this->exists) {
             // Delete empty form flash if it exists (it carries no information).
             return $this->delete();
@@ -341,7 +359,7 @@ class FormFlash implements FormFlashInterface
 
         // Prepare upload data for later save
         $data = [
-            'name' => basename($filename),
+            'name' => Utils::basename($filename),
             'type' => Utils::getMimeByLocalFile($filename),
             'size' => filesize($filename),
         ];
@@ -388,8 +406,8 @@ class FormFlash implements FormFlashInterface
      */
     public function clearFiles()
     {
-        foreach ($this->files as $field => $files) {
-            foreach ($files as $name => $upload) {
+        foreach ($this->files as $files) {
+            foreach ($files as $upload) {
                 $this->removeTmpFile($upload['tmp_name'] ?? '');
             }
         }
@@ -404,6 +422,7 @@ class FormFlash implements FormFlashInterface
     {
         return [
             'form' => $this->formName,
+            'id' => $this->getId(),
             'unique_id' => $this->uniqueId,
             'url' => $this->url,
             'user' => $this->user,
@@ -476,12 +495,32 @@ class FormFlash implements FormFlashInterface
     }
 
     /**
-     * @return YamlFile
+     * Gate for identifiers used in filesystem paths. Accepts the character set produced by PHP session ids
+     * and Grav's form unique-id generators (alphanumerics, comma, underscore, hyphen). Anything else,
+     * including empty or non-string values, collapses to an empty string, which makes save(), delete()
+     * and getTmpDir() no-ops.
+     *
+     * @param mixed $id
+     * @return string
      */
-    protected function getTmpIndex(): YamlFile
+    private static function sanitizeId($id): string
     {
+        if (!is_string($id) || $id === '') {
+            return '';
+        }
+
+        return preg_match('/^[A-Za-z0-9,_-]{1,64}$/', $id) ? $id : '';
+    }
+
+    /**
+     * @return ?YamlFile
+     */
+    protected function getTmpIndex(): ?YamlFile
+    {
+        $tmpDir = $this->getTmpDir();
+
         // Do not use CompiledYamlFile as the file can change multiple times per second.
-        return YamlFile::instance($this->getTmpDir() . '/index.yaml');
+        return $tmpDir ? YamlFile::instance($tmpDir . '/index.yaml') : null;
     }
 
     /**
@@ -503,7 +542,9 @@ class FormFlash implements FormFlashInterface
     {
         // Make sure that index file cache gets always cleared.
         $file = $this->getTmpIndex();
-        $file->free();
+        if ($file) {
+            $file->free();
+        }
 
         $tmpDir = $this->getTmpDir();
         if ($tmpDir && file_exists($tmpDir)) {

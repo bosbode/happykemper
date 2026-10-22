@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Data
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -57,6 +57,15 @@ class BlueprintSchema extends BlueprintSchemaBase implements ExportInterface
     }
 
     /**
+     * @param string $name
+     * @return array|null
+     */
+    public function getNestedRules(string $name)
+    {
+        return $this->getNested($name);
+    }
+
+    /**
      * Validate data against blueprints.
      *
      * @param  array $data
@@ -74,7 +83,7 @@ class BlueprintSchema extends BlueprintSchemaBase implements ExportInterface
         }
 
         if (!empty($messages)) {
-            throw (new ValidationException())->setMessages($messages);
+            throw (new ValidationException('', 400))->setMessages($messages);
         }
     }
 
@@ -106,23 +115,30 @@ class BlueprintSchema extends BlueprintSchemaBase implements ExportInterface
     /**
      * Flatten data by using blueprints.
      *
-     * @param  array $data                  Data to be flattened.
-     * @param bool $includeAll
+     * @param array $data       Data to be flattened.
+     * @param bool $includeAll  True if undefined properties should also be included.
+     * @param string $name      Property which will be flattened, useful for flattening repeating data.
      * @return array
      */
-    public function flattenData(array $data, bool $includeAll = false)
+    public function flattenData(array $data, bool $includeAll = false, string $name = '')
     {
+        $prefix = $name !== '' ? $name . '.' : '';
+
         $list = [];
         if ($includeAll) {
-            foreach ($this->items as $key => $rules) {
+            $items = $name !== '' ? $this->getProperty($name)['fields'] ?? [] : $this->items;
+            foreach ($items as $key => $rules) {
                 $type = $rules['type'] ?? '';
-                if (!str_starts_with($type, '_') && !str_contains($key, '*')) {
-                    $list[$key] = null;
+                $ignore = (bool) array_filter((array)($rules['validate']['ignore'] ?? [])) ?? false;
+                if (!str_starts_with($type, '_') && !str_contains($key, '*') && $ignore !== true) {
+                    $list[$prefix . $key] = null;
                 }
             }
         }
 
-        return array_replace($list, $this->flattenArray($data, $this->nested, ''));
+        $nested = $this->getNestedRules($name);
+
+        return array_replace($list, $this->flattenArray($data, $nested, $prefix));
     }
 
     /**
@@ -180,6 +196,38 @@ class BlueprintSchema extends BlueprintSchemaBase implements ExportInterface
 
                 $messages += Validation::validate($child, $rule);
 
+                if (isset($rule['validate']['match']) || isset($rule['validate']['match_exact']) || isset($rule['validate']['match_any'])) {
+                    $ruleKey = current(array_intersect(['match', 'match_exact', 'match_any'], array_keys($rule['validate'])));
+                    $otherKey = $rule['validate'][$ruleKey] ?? null;
+                    $otherVal = $data[$otherKey] ?? null;
+                    $otherLabel = $this->items[$otherKey]['label'] ?? $otherKey;
+                    $currentVal = $data[$key] ?? null;
+                    $currentLabel = $this->items[$key]['label'] ?? $key;
+
+                    // Determine comparison type (loose, strict, substring)
+                    // Perform comparison:
+                    $isValid = false;
+                    if ($ruleKey === 'match') {
+                        $isValid = ($currentVal == $otherVal);
+                    } elseif ($ruleKey === 'match_exact') {
+                        $isValid = ($currentVal === $otherVal);
+                    } elseif ($ruleKey === 'match_any') {
+                        // If strings:
+                        if (is_string($currentVal) && is_string($otherVal)) {
+                            $isValid = (strlen($currentVal) && strlen($otherVal) && (str_contains($currentVal,
+                                        $otherVal) || strpos($otherVal, $currentVal) !== false));
+                        }
+                        // If arrays:
+                        if (is_array($currentVal) && is_array($otherVal)) {
+                            $common = array_intersect($currentVal, $otherVal);
+                            $isValid = !empty($common);
+                        }
+                    }
+                    if (!$isValid) {
+                        $messages[$rule['name']][] = sprintf(Grav::instance()['language']->translate('PLUGIN_FORM.VALIDATION_MATCH'), $currentLabel, $otherLabel);
+                    }
+                }
+
             } elseif (is_array($child) && is_array($val)) {
                 // Array has been defined in blueprints.
                 $messages += $this->validateArray($child, $val, $strict);
@@ -190,7 +238,7 @@ class BlueprintSchema extends BlueprintSchemaBase implements ExportInterface
                 /** @var Config $config */
                 $config = Grav::instance()['config'];
                 if (!$config->get('system.strict_mode.blueprint_strict_compat', true)) {
-                    throw new RuntimeException(sprintf('%s is not defined in blueprints', $key));
+                    throw new RuntimeException(sprintf('%s is not defined in blueprints', $key), 400);
                 }
 
                 user_error(sprintf('Having extra key %s in your data is deprecated with blueprint having \'validation: strict\'', $key), E_USER_DEPRECATED);
@@ -317,6 +365,10 @@ class BlueprintSchema extends BlueprintSchemaBase implements ExportInterface
                     $toggle = [];
                 }
                 // Recursively fetch the items.
+                $childData = $data[$key] ?? null;
+                if (null !== $childData && !is_array($childData)) {
+                    throw new \RuntimeException(sprintf("Bad form data for field collection '%s': %s used instead of an array", $key, gettype($childData)));
+                }
                 $data[$key] = $this->processFormRecursive($data[$key] ?? null, $toggle, $value);
             } else {
                 $field = $this->get($value);

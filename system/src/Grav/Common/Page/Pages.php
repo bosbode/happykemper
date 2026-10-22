@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -26,6 +26,7 @@ use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Taxonomy;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
+use Grav\Events\TypesEvent;
 use Grav\Framework\Flex\Flex;
 use Grav\Framework\Flex\FlexDirectory;
 use Grav\Framework\Flex\Interfaces\FlexTranslateInterface;
@@ -88,6 +89,8 @@ class Pages
     /** @var string */
     protected $check_method;
     /** @var string */
+    protected $simple_pages_hash;
+    /** @var string */
     protected $pages_cache_id;
     /** @var bool */
     protected $initialized = false;
@@ -99,6 +102,7 @@ class Pages
     protected static $types;
     /** @var string|null */
     protected static $home_route;
+
 
     /**
      * Constructor
@@ -197,6 +201,58 @@ class Pages
     }
 
     /**
+     * Get relative referrer route and language code. Returns null if the route isn't within the current base, language (if set) and route.
+     *
+     * @example `$langCode = null; $referrer = $pages->referrerRoute($langCode, '/admin');` returns relative referrer url within /admin and updates $langCode
+     * @example `$langCode = 'en'; $referrer = $pages->referrerRoute($langCode, '/admin');` returns relative referrer url within the /en/admin
+     *
+     * @param string|null $langCode Variable to store the language code. If already set, check only against that language.
+     * @param string $route Optional route within the site.
+     * @return string|null
+     * @since 1.7.23
+     */
+    public function referrerRoute(?string &$langCode, string $route = '/'): ?string
+    {
+        $referrer = $_SERVER['HTTP_REFERER'] ?? null;
+
+        // Start by checking that referrer came from our site.
+        $root = $this->grav['base_url_absolute'];
+        if (!is_string($referrer) || !str_starts_with($referrer, $root)) {
+            return null;
+        }
+
+        /** @var Language $language */
+        $language = $this->grav['language'];
+
+        // Get all language codes and append no language.
+        if (null === $langCode) {
+            $languages = $language->enabled() ? $language->getLanguages() : [];
+            $languages[] = '';
+        } else {
+            $languages[] = $langCode;
+        }
+
+        $path_base = rtrim($this->base(), '/');
+        $path_route = rtrim($route, '/');
+
+        // Try to figure out the language code.
+        foreach ($languages as $code) {
+            $path_lang = $code ? "/{$code}" : '';
+
+            $base = $path_base . $path_lang . $path_route;
+            if ($referrer === $base || str_starts_with($referrer, "{$base}/")) {
+                if (null === $langCode) {
+                    $langCode = $code;
+                }
+
+                return substr($referrer, \strlen($base));
+            }
+        }
+
+        return null;
+    }
+
+    /**
      *
      * Get base URL for Grav pages.
      *
@@ -274,7 +330,7 @@ class Pages
      *
      * @return void
      */
-    public function reset()
+    public function reset(): void
     {
         $this->initialized = false;
 
@@ -540,9 +596,9 @@ class Pages
         }
 
         if (isset($params['dateRange'])) {
-            $start = $params['dateRange']['start'] ?? 0;
-            $end = $params['dateRange']['end'] ?? false;
-            $field = $params['dateRange']['field'] ?? false;
+            $start = $params['dateRange']['start'] ?? null;
+            $end = $params['dateRange']['end'] ?? null;
+            $field = $params['dateRange']['field'] ?? null;
             $collection = $collection->dateRange($start, $end, $field);
         }
 
@@ -554,7 +610,7 @@ class Pages
 
             if (is_array($sort_flags)) {
                 $sort_flags = array_map('constant', $sort_flags); //transform strings to constant value
-                $sort_flags = array_reduce($sort_flags, function ($a, $b) {
+                $sort_flags = array_reduce($sort_flags, static function ($a, $b) {
                     return $a | $b;
                 }, 0); //merge constant values using bit or
             }
@@ -597,7 +653,7 @@ class Pages
             $cmd = $value;
             $params = [];
         } elseif (is_array($value) && count($value) === 1 && !is_int(key($value))) {
-            // Format: @command.param: { attr1: value1, attr2: value2 }
+            // Format: @command.param: { attr1: value1, attr2: value2 }
             $cmd = (string)key($value);
             $params = (array)current($value);
         } else {
@@ -663,29 +719,45 @@ class Pages
 
         switch ($type) {
             case 'all':
-                return $page->children();
+                $collection = $page->children();
+                break;
             case 'modules':
             case 'modular':
-                return $page->children()->modules();
+                $collection = $page->children()->modules();
+                break;
             case 'pages':
             case 'children':
-                return $page->children()->pages();
+                $collection = $page->children()->pages();
+                break;
             case 'page':
             case 'self':
-                return !$page->root() ? (new Collection())->addPage($page) : new Collection();
+                $collection = !$page->root() ? (new Collection())->addPage($page) : new Collection();
+                break;
             case 'parent':
                 $parent = $page->parent();
                 $collection = new Collection();
-                return $parent ? $collection->addPage($parent) : $collection;
+                $collection = $parent ? $collection->addPage($parent) : $collection;
+                break;
             case 'siblings':
                 $parent = $page->parent();
-                return $parent ? $parent->children()->remove($page->path()) : new Collection();
+                if ($parent) {
+                    /** @var Collection $collection */
+                    $collection = $parent->children();
+                    $collection = $collection->remove($page->path());
+                } else {
+                    $collection = new Collection();
+                }
+                break;
             case 'descendants':
-                return $this->all($page)->remove($page->path())->pages();
+                $collection = $this->all($page)->remove($page->path())->pages();
+                break;
             default:
                 // Unknown type; return empty collection.
-                return new Collection();
+                $collection = new Collection();
+                break;
         }
+
+        return $collection;
     }
 
     /**
@@ -979,9 +1051,14 @@ class Pages
                     $this->grav->redirectLangSafe($page->redirect());
                 }
 
-                if (!$routable && ($child = $page->children()->visible()->routable()->published()->first()) !== null) {
-                    // Redirect to the first visible child as current page isn't routable.
-                    $this->grav->redirectLangSafe($child->route());
+                if (!$routable) {
+                    /** @var Collection $children */
+                    $children = $page->children()->visible()->routable()->published();
+                    $child = $children->first();
+                    if ($child !== null) {
+                        // Redirect to the first visible child as current page isn't routable.
+                        $this->grav->redirectLangSafe($child->route());
+                    }
                 }
             }
 
@@ -1213,7 +1290,7 @@ class Pages
 
             $scanBlueprintsAndTemplates = static function (Types $types) use ($grav) {
                 // Scan blueprints
-                $event = new Event();
+                $event = new TypesEvent();
                 $event->types = $types;
                 $grav->fireEvent('onGetPageBlueprints', $event);
 
@@ -1227,7 +1304,7 @@ class Pages
                 $types->scanBlueprints($lookup);
 
                 // Scan templates
-                $event = new Event();
+                $event = new TypesEvent();
                 $event->types = $types;
                 $grav->fireEvent('onGetPageTemplates', $event);
 
@@ -1639,10 +1716,7 @@ class Pages
         /** @var Language $language */
         $language = $this->grav['language'];
 
-        $pages_dir = $locator->findResource('page://');
-        if (!is_string($pages_dir)) {
-            throw new RuntimeException('Internal Error');
-        }
+        $pages_dirs = $this->getPagesPaths();
 
         // Set active language
         $this->active_lang = $language->getActive();
@@ -1658,16 +1732,17 @@ class Pages
                     $hash = 0;
                     break;
                 case 'folder':
-                    $hash = Folder::lastModifiedFolder($pages_dir);
+                    $hash = Folder::lastModifiedFolder($pages_dirs);
                     break;
                 case 'hash':
-                    $hash = Folder::hashAllFiles($pages_dir);
+                    $hash = Folder::hashAllFiles($pages_dirs);
                     break;
                 default:
-                    $hash = Folder::lastModifiedFile($pages_dir);
+                    $hash = Folder::lastModifiedFile($pages_dirs);
             }
 
-            $this->pages_cache_id = md5($pages_dir . $hash . $language->getActive() . $config->checksum());
+            $this->simple_pages_hash = json_encode($pages_dirs) . $hash . $config->checksum();
+            $this->pages_cache_id = md5($this->simple_pages_hash . $language->getActive());
 
             /** @var Cache $cache */
             $cache = $this->grav['cache'];
@@ -1687,18 +1762,39 @@ class Pages
             $this->grav['debugger']->addMessage('Page cache disabled, rebuilding pages..');
         }
 
-        $this->resetPages($pages_dir);
+        $this->resetPages($pages_dirs);
+    }
+
+    protected function getPagesPaths(): array
+    {
+        $grav = Grav::instance();
+        $locator = $grav['locator'];
+        $paths = [];
+
+        $dirs = (array) $grav['config']->get('system.pages.dirs', ['page://']);
+        foreach ($dirs as $dir) {
+            $path = $locator->findResource($dir);
+            if (file_exists($path) && !in_array($path, $paths, true)) {
+                $paths[] = $path;
+            }
+        }
+
+        return $paths;
     }
 
     /**
      * Accessible method to manually reset the pages cache
      *
-     * @param string $pages_dir
+     * @param array $pages_dirs
      */
-    public function resetPages($pages_dir): void
+    public function resetPages(array $pages_dirs): void
     {
         $this->sort = [];
-        $this->recurse($pages_dir);
+
+        foreach ($pages_dirs as $dir) {
+            $this->recurse($dir);
+        }
+
         $this->buildRoutes();
 
         // cache if needed
@@ -1722,7 +1818,7 @@ class Pages
      * @throws RuntimeException
      * @internal
      */
-    protected function recurse($directory, PageInterface $parent = null)
+    protected function recurse(string $directory, PageInterface $parent = null)
     {
         $directory = rtrim($directory, DS);
         $page = new Page;
@@ -1761,7 +1857,7 @@ class Pages
         // Build regular expression for all the allowed page extensions.
         $page_extensions = $language->getFallbackPageExtensions();
         $regex = '/^[^\.]*(' . implode('|', array_map(
-            function ($str) {
+            static function ($str) {
                 return preg_quote($str, '/');
             },
             $page_extensions
@@ -1917,17 +2013,26 @@ class Pages
 
             // add regular route
             if ($route) {
+                if (isset($this->routes[$route]) && $this->routes[$route] !== $page_path) {
+                    $this->grav['debugger']->addMessage("Route '{$route}' already exists: {$this->routes[$route]}, overwriting with {$page_path}");
+                }
                 $this->routes[$route] = $page_path;
             }
 
             // add raw route
-            if ($raw_route && $raw_route !== $route) {
+            if ($raw_route) {
+                if (isset($this->routes[$raw_route]) && $this->routes[$route] !== $page_path) {
+                    $this->grav['debugger']->addMessage("Raw Route '{$raw_route}' already exists: {$this->routes[$raw_route]}, overwriting with {$page_path}");
+                }
                 $this->routes[$raw_route] = $page_path;
             }
 
             // add canonical route
             $route_canonical = $page->routeCanonical();
-            if ($route_canonical && $route !== $route_canonical) {
+            if ($route_canonical) {
+                if (isset($this->routes[$route_canonical]) && $this->routes[$route_canonical] !== $page_path) {
+                    $this->grav['debugger']->addMessage("Canonical Route '{$route_canonical}' already exists: {$this->routes[$route_canonical]}, overwriting with {$page_path}");
+                }
                 $this->routes[$route_canonical] = $page_path;
             }
 
@@ -1935,6 +2040,9 @@ class Pages
             $route_aliases = $page->routeAliases();
             if ($route_aliases) {
                 foreach ($route_aliases as $alias) {
+                    if (isset($this->routes[$alias]) && $this->routes[$alias] !== $page_path) {
+                        $this->grav['debugger']->addMessage("Alias Route '{$alias}' already exists: {$this->routes[$alias]}, overwriting with {$page_path}");
+                    }
                     $this->routes[$alias] = $page_path;
                 }
             }
@@ -2003,7 +2111,7 @@ class Pages
                     $list[$key] = $child->slug();
                     break;
                 case 'basename':
-                    $list[$key] = basename($key);
+                    $list[$key] = Utils::basename($key);
                     break;
                 case 'folder':
                     $list[$key] = $child->folder();
@@ -2104,7 +2212,7 @@ class Pages
      * @param array $list
      * @return array
      */
-    protected function arrayShuffle($list)
+    protected function arrayShuffle(array $list): array
     {
         $keys = array_keys($list);
         shuffle($keys);
@@ -2120,7 +2228,7 @@ class Pages
     /**
      * @return string
      */
-    protected function getVersion()
+    protected function getVersion(): string
     {
         return $this->directory ? 'flex' : 'regular';
     }
@@ -2131,10 +2239,20 @@ class Pages
      * this is particularly useful to know if pages have changed and you want
      * to sync another cache with pages cache - works best in `onPagesInitialized()`
      *
-     * @return string
+     * @return null|string
      */
-    public function getPagesCacheId()
+    public function getPagesCacheId(): ?string
     {
         return $this->pages_cache_id;
+    }
+
+    /**
+     * Get the simple pages hash that is not md5 encoded, and isn't specific to language
+     *
+     * @return null|string
+     */
+    public function getSimplePagesHash(): ?string
+    {
+        return $this->simple_pages_hash;
     }
 }

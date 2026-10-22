@@ -1,10 +1,8 @@
 <?php namespace Clockwork\DataSource;
 
-use Clockwork\Helpers\Serializer;
-use Clockwork\Helpers\StackTrace;
+use Clockwork\Helpers\{Serializer, StackTrace};
 use Clockwork\Request\Request;
-use Clockwork\Support\Laravel\Eloquent\ResolveModelLegacyScope;
-use Clockwork\Support\Laravel\Eloquent\ResolveModelScope;
+use Clockwork\Support\Laravel\Eloquent\{ResolveModelLegacyScope, ResolveModelScope};
 
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Contracts\Events\Dispatcher as EventDispatcher;
@@ -16,6 +14,9 @@ class EloquentDataSource extends DataSource
 
 	// Database manager instance
 	protected $databaseManager;
+
+	// Event dispatcher instance
+	protected $eventDispatcher;
 
 	// Array of collected queries
 	protected $queries = [];
@@ -106,6 +107,8 @@ class EloquentDataSource extends DataSource
 		];
 
 		$this->nextQueryModel = null;
+
+		if ($this->detectDuplicateQueries) $this->duplicateQueries = [];
 	}
 
 	// Start listening to Eloquent events
@@ -130,6 +133,23 @@ class EloquentDataSource extends DataSource
 			// Laravel 5.0 to 5.1
 			$this->eventDispatcher->listen('illuminate.query', function ($event) {
 				$this->registerLegacyQuery($event);
+			});
+		}
+
+		// Laravel 5.2 and up
+		if (class_exists(\Illuminate\Database\Events\TransactionBeginning::class)) {
+			$this->eventDispatcher->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($event) {
+				$this->registerTransactionQuery($event, 'START TRANSACTION');
+			});
+		}
+		if (class_exists(\Illuminate\Database\Events\TransactionCommitted::class)) {
+			$this->eventDispatcher->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($event) {
+				$this->registerTransactionQuery($event, 'COMMIT');
+			});
+		}
+		if (class_exists(\Illuminate\Database\Events\TransactionRolledBack::class)) {
+			$this->eventDispatcher->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($event) {
+				$this->registerTransactionQuery($event, 'ROLLBACK');
 			});
 		}
 
@@ -191,6 +211,26 @@ class EloquentDataSource extends DataSource
 		]);
 	}
 
+	// Collect an executed transaction query
+	protected function registerTransactionQuery($event, $name)
+	{
+		$trace = StackTrace::get()->resolveViewName();
+
+		$query = [
+			'query'      => $name,
+			'duration'   => 0,
+			'connection' => $event->connectionName,
+			'time'       => microtime(true),
+			'trace'      => (new Serializer)->trace($trace),
+			'model'      => null,
+			'tags'       => []
+		];
+
+		if (! $this->collectQueries) return;
+
+		$this->queries[] = $query;
+	}
+
 	// Collect a model event and update stats
 	protected function collectModelEvent($event, $model)
 	{
@@ -198,10 +238,10 @@ class EloquentDataSource extends DataSource
 
 		$action = [
 			'model'      => $modelClass = get_class($model),
-			'key'        => $model->getKey(),
+			'key'        => $this->getModelKey($model),
 			'action'     => $event,
 			'attributes' => $this->collectModelsRetrieved && $event == 'retrieved' ? $model->getOriginal() : [],
-			'changes'    => $this->collectModelsActions ? $model->getChanges() : [],
+			'changes'    => $this->collectModelsActions && method_exists($model, 'getChanges') ? $model->getChanges() : [],
 			'time'       => microtime(true) / 1000,
 			'query'      => $lastQuery ? $lastQuery['query'] : null,
 			'duration'   => $lastQuery ? $lastQuery['duration'] : null,
@@ -231,17 +271,25 @@ class EloquentDataSource extends DataSource
 		// add bindings to query
 		$bindings = $this->databaseManager->connection($connection)->prepareBindings($bindings);
 
-		foreach ($bindings as $binding) {
-			$binding = $this->quoteBinding($binding, $connection);
+		$index = 0;
+		$query = preg_replace_callback('/\'[^\']*\'|[^?]\?|\W:[a-z]+/', function ($matches) use ($bindings, $connection, &$index) {
+			$match = $matches[0];
+
+			if ($match[0] == '\'') { // quoted string
+				return $match;
+			} elseif ($match[1] == '?' && isset($bindings[$index])) { // question-mark binding
+				$binding = $this->quoteBinding($bindings[$index++], $connection);
+			} elseif ($match[1] == ':' && isset($bindings[substr($match, 2)])) { // named binding
+				$binding = $this->quoteBinding($bindings[substr($match, 2)], $connection);
+			} else {
+				return $match;
+			}
 
 			// convert binary bindings to hexadecimal representation
-			if (! preg_match('//u', $binding)) $binding = '0x' . bin2hex($binding);
+			if (! preg_match('//u', (string) $binding)) $binding = '0x' . bin2hex($binding);
 
-			// escape backslashes in the binding (preg_replace requires to do so)
-			$binding = str_replace('\\', '\\\\', $binding);
-
-			$query = preg_replace('/\?/', $binding, $query, 1);
-		}
+			return $match[0] . ((string) $binding);
+		}, $query);
 
 		// highlight keywords
 		$keywords = [
@@ -258,12 +306,19 @@ class EloquentDataSource extends DataSource
 	{
 		$connection = $this->databaseManager->connection($connection);
 
-		if ($connection->getPdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'odbc') {
-			// PDO_ODBC driver doesn't support the quote method, apply simple MSSQL style quoting instead
+		if (! method_exists($connection, 'getPdo')) return;
+
+		$pdo = $connection->getPdo();
+
+		if ($pdo === null) return;
+
+		if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'odbc' || $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'crate') {
+			// PDO_ODBC and PDO Crate driver doesn't support the quote method, apply simple MSSQL style quoting instead - Crate sometimes uses a object as a binding - for json support
+			$binding = is_object($binding) ? json_encode($binding) : $binding;
 			return "'" . str_replace("'", "''", $binding) . "'";
 		}
 
-		return $connection->getPdo()->quote($binding);
+		return is_string($binding) ? $pdo->quote($binding) : $binding;
 	}
 
 	// Increment query counts for collected query
@@ -309,5 +364,16 @@ class EloquentDataSource extends DataSource
 		}
 
 		return new ResolveModelScope($this);
+	}
+
+	// Returns model key without crashing when using Eloquent strict mode and it's not loaded
+	protected function getModelKey($model)
+	{
+		// Some applications use non-string primary keys, even when this is not supported by Laravel
+		if (! is_string($model->getKeyName())) return;
+
+		try {
+			return $model->getKey();
+		} catch (\Illuminate\Database\Eloquent\MissingAttributeException $e) {}
 	}
 }

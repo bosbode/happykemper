@@ -9,14 +9,13 @@
     {% endif %}
 
     {% if field.text %}
-    <p>{{ field.text|t|raw }}</p>
+    {% if field.markdown %}<p>{{ field.text|t|markdown|raw }}</p>{% else %}<p>{{ field.text|t|e }}</p>{% endif %}
     {% endif %}
 
-    {% if field.fields %}
-        <div class="form-section">
-            {% include 'forms/default/fields.html.twig' with {name: field.name, fields: field.fields} %}
-        </div>
-    {% endif %}
+  {% embed 'forms/default/fields.html.twig' with {name: field.name, fields: field.fields} %}
+    {% block outer_markup_field_open %}<div class="form-section">{% endblock %}
+    {% block outer_markup_field_close %}</div>{% endblock %}
+  {% endembed %}
 </div>
 {% endif %}
 {% endblock %}

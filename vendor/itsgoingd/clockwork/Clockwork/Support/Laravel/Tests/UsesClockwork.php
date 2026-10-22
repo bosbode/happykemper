@@ -1,8 +1,6 @@
 <?php namespace Clockwork\Support\Laravel\Tests;
 
-use Clockwork\Helpers\Serializer;
-use Clockwork\Helpers\StackFilter;
-use Clockwork\Helpers\StackTrace;
+use Clockwork\Helpers\{Serializer, StackFilter, StackTrace};
 
 use PHPUnit\Framework\Constraint\Constraint;
 use PHPUnit\Runner\BaseTestRunner;
@@ -18,6 +16,8 @@ trait UsesClockwork
 	// Set up Clockwork in this test case, should be called from the PHPUnit setUp method
 	protected function setUpClockwork()
 	{
+		if (! $this->app->make('clockwork.support')->isCollectingTests()) return;
+
 		$this->beforeApplicationDestroyed(function () {
 			if ($this->app->make('clockwork.support')->isTestFiltered($this->toString())) return;
 
@@ -48,7 +48,7 @@ trait UsesClockwork
 			BaseTestRunner::STATUS_WARNING    => 'warning'
 		];
 
-		return isset($statuses[$status]) ? $statuses[$status] : null;
+		return $statuses[$status] ?? null;
 	}
 
 	// Resolve executed asserts
@@ -56,7 +56,7 @@ trait UsesClockwork
 	{
 		$asserts = static::$clockwork['asserts'];
 
-		if ($this->getStatus() == BaseTestRunner::STATUS_FAILURE) {
+		if ($this->getStatus() == BaseTestRunner::STATUS_FAILURE && count($asserts)) {
 			$asserts[count($asserts) - 1]['passed'] = false;
 		}
 

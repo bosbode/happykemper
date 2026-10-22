@@ -1,3 +1,567 @@
+# v1.10.60
+## 09/28/2026
+
+1. [](#bugfix)
+    * Retrying an admin login while locked out no longer extends the lockout, and the message says how many minutes are actually left. The admin now uses the same login check as the frontend, so it needs Login 3.9.12 [getgrav/grav-plugin-login#343](https://github.com/getgrav/grav-plugin-login/pull/343)
+
+# v1.10.59
+## 09/13/2026
+
+1. [](#bugfix)
+    * The Expand All and Collapse All buttons now appear above a list field when its controls are set to `top` or `both`. Thanks @sridharkalaibala [#2503](https://github.com/getgrav/grav-plugin-admin/issues/2503)
+    * A placeholder set to `0` now shows instead of being treated as no placeholder at all. Thanks @sridharkalaibala [#2521](https://github.com/getgrav/grav-plugin-admin/pull/2521)
+    * SVG files now show a preview in the file picker, matching the media manager. Thanks @sridharkalaibala [#2522](https://github.com/getgrav/grav-plugin-admin/pull/2522)
+
+# v1.10.58
+## 09/09/2026
+
+1. [](#improved)
+    * A field's `classes` are now applied to the `array`, `column`, and `columns` field types, which previously ignored them [#2508](https://github.com/getgrav/grav-plugin-admin/pull/2508)
+    * Corrected and completed the Spanish translations [#2509](https://github.com/getgrav/grav-plugin-admin/pull/2509)
+
+1. [](#bugfix)
+    * The `array` field no longer renders a second `class` attribute for its one-child state, which meant the attribute was silently dropped
+
+# v1.10.57
+## 09/01/2026
+
+1. [](#bugfix)
+    * The plugin now states that it only supports Grav 1.7, so it is no longer offered for install on a Grav 2.0 site. Grav 2.0's admin is the separate Admin Next plugin [#4273](https://github.com/getgrav/grav/discussions/4273)
+
+# v1.10.56
+## 08/27/2026
+
+1. [](#bugfix)
+    * [security] Two-factor login now limits how many incorrect codes can be tried in a row, so a stolen password can no longer be paired with guessing the 6-digit code (GHSA-9j6w-2q6c-q3q8).
+    * [security] Viewing the admin logs now requires a super admin, matching the other system tools (GHSA-52mc-3pjw-886v).
+    * [security] An admin who can manage users but is not a super admin can no longer edit a super admin who holds that access through a group, closing a remaining privilege-escalation path (GHSA-vv8m-jqpm-38x4).
+    * [security] Restricted a non-super admin from reaching super-only configuration through the "tools" permission alias (GHSA-gxxc-pcrx-22fr).
+
+# v1.10.55
+## 08/11/2026
+
+1. [](#bugfix)
+    * [security] The page "Save As" action now rejects a language code that is not one of the site's configured languages, closing a path that let an editor write a Markdown file outside the pages folder ([GHSA-h9g9-73c3-23c9](https://github.com/getgrav/grav/security/advisories/GHSA-h9g9-73c3-23c9)).
+
+
+# v1.10.54
+## 08/07/2026
+
+1. [](#bugfix)
+    * Deleting a media file whose name contains a bracket or a similar character now removes its retina copies and metadata, which were previously left behind.
+    * Deleting a media file no longer also removes files belonging to a different item whose name ends with the same text, so deleting `banner.jpg` leaves `my-banner@2x.jpg` alone.
+
+# v1.10.53
+## 07/21/2026
+
+1. [](#bugfix)
+    * [security] An admin who can manage users but is not a super admin can no longer reset a super admin's password, closing a privilege-escalation path (GHSA-p97c-g455-q447).
+    * File field "View" links now open the file's actual stored URL and no longer trigger a broken image request ([#2517](https://github.com/getgrav/grav-plugin-admin/pull/2517)).
+1. [](#improved)
+    * Inserting a media file whose name contains spaces now produces clean, readable caption text in the Markdown instead of showing `%20`. Relates to [getgrav/grav#4197](https://github.com/getgrav/grav/issues/4197).
+    * Refreshed the admin theme's build tooling and stopped committing developer-only lockfiles so the plugin no longer raises dependency vulnerability alerts in projects that track it.
+
+# v1.10.52
+## 06/10/2026
+
+1. [](#bugfix)
+    * Fixed `bin/gpm` commands silently exiting on a fresh Grav 2.0 + Admin install before any user accounts had been created ([grav#4079](https://github.com/getgrav/grav/issues/4079)).
+    * Fixed a 404 when creating or renaming a top-level page whose folder name starts with "admin" (for example `administration`), caused by the admin redirect mistaking it for the admin route ([grav-plugin-admin#2513](https://github.com/getgrav/grav-plugin-admin/issues/2513)).
+
+# v1.10.51
+## 05/05/2026
+
+1. [](#new)
+    * Release as 1.10.51
+
+# v1.10.49.5
+## 05/05/2026
+
+1. [](#bugfix)
+    * [security] Fixed stored XSS in the page move/parents dialog (GHSA-fmg2-f5r9-24qc)
+
+# v1.10.49.4
+## 04/16/2026
+
+1. [](#new)
+    * Grav 2.0 migration banner on the dashboard — surfaces when the remote advertises a next-major release, with stacked CTAs for either "Start migration" (when migrate-grav is enabled) or "Install Migrate plugin" (deep-linking to `/admin/plugins/migrate-grav`), plus an external "Learn how to migrate" link
+2. [](#improved)
+    * Log date handling in Tools → Logs now renders more reliably ([#2497](https://github.com/getgrav/grav-plugin-admin/pull/2497))
+    * Backup dates now carry a `title` attribute for the full timestamp on hover ([#2499](https://github.com/getgrav/grav-plugin-admin/pull/2499))
+3. [](#bugfix)
+    * Scheduler status display now matches runtime enabled logic — no more "enabled" showing for jobs that won't actually run
+    * Single-file save path fixed
+    * Module folder renames now preserve the leading underscore (`_folder`)
+    * 2FA verification no longer fails when the pasted token carries trailing/embedded whitespace ([#2489](https://github.com/getgrav/grav-plugin-admin/issues/2489))
+    * scheduler-webhook plugin compatibility fixes
+
+# v1.10.49.3
+## 01/27/2026
+
+1. [](#improved)
+    * Support new `licensing.getgrav.org` server for premium downloads
+
+# v1.10.49.2
+## 12/29/2025
+
+1. [](#improved)
+    * Added fallback autoloader to handle class location changes during upgrades
+    * Lazy-load WhiteLabel and ScssCompiler to avoid loading scssphp during upgrades
+    * Use sendJsonResponse() to exit early after package install/reinstall tasks
+
+# v1.10.49.1
+## 09/03/2025
+
+1. [](#bugfix)
+    * Fixed several JS issues with Notifications and Scheduler
+
+# v1.10.49
+## 08/25/2025
+
+1. [](#new)
+    * Upgraded to very latest FontAwesome 7.0 with custom ForkAwesome Shim
+    * Support for enhanced Scheduler in admin
+    * PHP 8.4 compatibility
+1. [](#improved)
+    * Vendor libraries updated
+    * Added translations for Fetchpriority Trait [#2436](https://github.com/getgrav/grav-plugin-admin/pull/2346)
+    * Other various missing langs strings added to 'english' translation
+1. [](#bugfix)
+    * Fix `force_ssl` use schema instead of server var [#2435](https://github.com/getgrav/grav-plugin-admin/pull/2345)
+    * Fix for fully turning off notifications JS
+
+# v1.10.48
+## 10/28/2024
+
+1. [](#improved)
+  * Treat AVIF as image when inserting / drag & dropping
+  * PHP 8.4 fixes - Implicitly nullable parameter declarations deprecate
+
+# v1.10.47
+## 10/22/2024
+
+1. [](#improved)
+  * Added missing `show_label` logic in list field
+  * Use plugin's selected icon when in plugin properties
+
+# v1.10.46
+## 05/15/2024
+
+1. [](#improved)
+  * Used Login's new `site_host` security setting for Admin password reset. Requires Login version `3.7.8+`
+
+# v1.10.45
+## 03/18/2024
+
+1. [](#improved)
+   * Improved class assignment for form fields [#2399](https://github.com/getgrav/grav-plugin-admin/pull/2379)
+   * Added label, sublabel, and icon help to list field [#2384](https://github.com/getgrav/grav-plugin-admin/pull/2384)
+   * Set admin language to user preference [#2369](https://github.com/getgrav/grav-plugin-admin/pull/2369)
+   * Updated language files to [latest translations](https://crowdin.com/project/grav-admin)
+
+# v1.10.44
+## 01/05/2024
+
+1. [](#improved)
+  * Updated language files for Image Decoding [getgrav/grav#3796](https://github.com/getgrav/grav/pull/3796)
+
+# v1.10.44
+## 01/05/2024
+
+1. [](#improved)
+   * Updated languages with fresh **Crowdin.com** builds
+   * Updated copyright date
+1. [](#bugfix)
+   * fixed `medium` tags in select fields [#2376]((https://github.com/getgrav/grav-plugin-admin/pull/2376)
+
+# v1.10.43
+## 10/02/2023
+
+1. [](#improved)
+   * Updated vendor libraries
+
+# v1.10.42
+## 06/14/2023
+
+1. [](#new)
+   * Added a couple of string translations
+
+# v1.10.41.2
+## 05/11/2023
+
+1. [](#improved)
+   * Fixed an issue with `lastBackup()` that caused admin dashboard to fail with an error.
+
+# v1.10.41.1
+## 05/09/2023
+
+1. [](#improved)
+   * Fixed another Toolbox deprecation error for `lastBackup()`
+
+# v1.10.41
+## 05/09/2023
+
+1. [](#new)
+   * Updated to use new `BaconQRCode` version `2.0.8` for new SVG features + PHP 8.2+ fixes
+1. [](#improved)
+   * Require Grav `v1.7.41`
+   * Fixed a deprecated message where `Admin::$routes` was being dynamically defined
+   * Fixes to use non-deprecated methods in `ScssCompiler`
+
+# v1.10.40
+## 03/22/2023
+
+1. [](#new)
+   * Added Github actions for dependabot [#2258](https://github.com/getgrav/grav-plugin-admin/pull/2258)
+1. [](#improved)
+   * Syslog tag fields label added [#2296](https://github.com/getgrav/grav-plugin-admin/pull/2296)
+   * Updated vendor libraries to the latest versions
+1. [](#bugfix)
+   * Fix more than one file upload [#2317](https://github.com/getgrav/grav-plugin-admin/pull/2317)
+
+# v1.10.39
+## 02/19/2023
+
+1. [](#bugfix)
+   * Forked and fixed PicoFeed library to support PHP 8.2
+
+# v1.10.38
+## 01/02/2023
+
+1. [](#new)
+   * Update copyright dates
+   * Keep version number in sync with Grav version
+
+# v1.10.37.1
+## 10/08/2022
+
+1. [](#bugfix)
+   * Removed new GumRoad cart icon + new button styling [getgrav/grav#3631](https://github.com/getgrav/grav/issues/3631)
+
+# v1.10.37
+## 10/05/2022
+
+1. [](#improved)
+   * Updated vendor libraries to latest versions
+   * Removed a reference to `SwiftMailer` library to support new **Email** plugin v4.0
+
+# v1.10.36
+## 09/08/2022
+
+1. [](#bugfix)
+   * Fixed `fieldset.html.twig` not rendering with `markdown: false` [#2313](https://github.com/getgrav/grav-plugin-admin/pull/2313)
+
+# v1.10.35
+## 08/04/2022
+
+1. [](#improved)
+   * Improvements in CodeMirror editor in RTL mode [#359](https://github.com/getgrav/grav-plugin-admin/issues/359), [#2297](https://github.com/getgrav/grav-plugin-admin/pull/2297)
+
+# v1.10.34
+## 06/22/2022
+
+1. [](#improved)
+   * Exposed `UriToMarkdown` util (`Grav.default.Utils.UriToMarkdown`) in admin, to convert links/images
+1. [](#bugfix)
+   * Fixed `Latest Page Updates` permissions [#2294](https://github.com/getgrav/grav-plugin-admin/pull/2294)
+
+# v1.10.33.1
+## 04/25/2022
+
+1. [](#bugfix)
+   * Reverted [PR#2265](https://github.com/getgrav/grav-plugin-admin/pull/2265) as it broke sections output
+
+# v1.10.33
+## 04/25/2022
+
+1. [](#new)
+  * Require **Form 6.0.1**
+2. [](#improved)
+   * Added support for a single `field:` vs `fields:` in element form field to store a single value to the option field
+   * Allow new media collapser logic to configure different cookie storage name location via `data-storage-location`
+1. [](#bugfix)
+   * Fixed nested element form fields
+   * Fixed `columns` and `column` fields with `.dotted` variables inside to ignore columns and column names
+   * Fixed initial elements state not being restored
+
+# v1.10.32
+## 03/28/2022
+
+1. [](#new)
+   * Require **Grav 1.7.32**, **Form 6.0.0**, **Login 3.7.0**, **Email 3.1.6** and **Flex Objects 1.2.0**
+2. [](#improved)
+   * List field: Support for default values other than key/value [#2255](https://github.com/getgrav/grav-plugin-admin/issues/2255)
+   * Added question icon to admin fields with help text [#2261](https://github.com/getgrav/grav-plugin-admin/issues/2261)
+3. [](#bugfix)
+   * Fix nested `toggleable`: originalValue now checks with `??` instead of `is defined`
+
+# v1.10.31
+## 03/14/2022
+
+1. [](#new)
+   * Added new local Multiavatar (local generation). **This will be default in Grav 1.8**
+2. [](#bugfix)
+   * Patch `collection.js` [#2235](https://github.com/getgrav/grav-plugin-admin/issues/2235)
+
+# v1.10.30.2
+## 02/09/2022
+
+2. [](#bugfix)
+   * Fixed regression preventing new `elements` field from saving its state
+
+# v1.10.30.1
+## 02/09/2022
+
+1. [](#improved)
+   * List field items will now require confirmation before getting deleted
+
+# v1.10.30
+## 02/07/2022
+
+1. [](#new)
+   * Require **Grav 1.7.30**
+   * Updated SCSS compiler to v1.10
+   * PageMedia can now be collapsed and thumbnails previewed smaller, in order to save room on the page. Selection will be remembered.
+   * DEPRECATED: Admin field `pages_list_display_field` is no longer available as an option [#2191](https://github.com/getgrav/grav-plugin-admin/issues/2191)
+   * When listing installable themes/plugins, it is now possible to sort them by [Premium](https://getgrav.org/premium)
+2. [](#improved)
+   * Updated JavaScript dependencies
+   * Cleaned up JavaScript unused dependencies and warnings
+   * Removed unused style assets
+   * Plugins list rows now properly highlight on hover, no more guessing when wanting to disable a plugin!
+3. [](#bugfix)
+   * Fixed `elements` field when it's used inside `list` field
+   * Fixed issue uploading non-images media when Resolution setting enabled in Admin [#2172](https://github.com/getgrav/grav-plugin-admin/issues/2172)
+   * Prevent fields from being toggled incorrectly by adding originalValue to childs of fieldset. [#2218](https://github.com/getgrav/grav-plugin-admin/pull/2218)
+   * Fixed persistent focus on Folder field when Adding page (Safari) [#2209](https://github.com/getgrav/grav-plugin-admin/issues/2209)
+   * Fixed performance of Plugins / Themes sort in the installation table
+   * Fixed list field with key/value pairs throwing an exception due to bad value [#2199](https://github.com/getgrav/grav-plugin-admin/issues/2199)
+   * Fixed disabling/enabling plugin from the list breaking the plugin configuration
+
+# v1.10.29
+## 01/28/2022
+
+1. [](#new)
+   * Require **Grav 1.7.29**
+3. [](#improved)
+   * Made path handling unicode-safe, use new `Utils::basename()` and `Utils::pathinfo()` everywhere
+
+# v1.10.28
+## 01/24/2022
+
+1. [](#bugfix)
+   * Clean file names before displaying errors/metadata modals
+   * Recompiled JS for production [#2225](https://github.com/getgrav/grav-plugin-admin/issues/2225)
+
+# v1.10.27
+## 01/12/2022
+
+1. [](#new)
+   * Support for `YubiKey OTP` 2-Factor authenticator
+   * New `elements` container field that shows/hides children fields based on boolean trigger value
+   * Requires Grav `v1.7.27` and Login `v3.6.2`
+2. [](#improved)
+   * Added new asset language strings
+
+# v1.10.26.1
+## 01/03/2022
+
+3. [](#bugfix)
+   * Fixed an issue with missing files reference by cached autoloader
+
+# v1.10.26
+## 01/03/2022
+
+2. [](#improved)
+   * Updated SCSS compiler to v1.9 and other vendor libraries
+   * Fixed various deprecation warnings
+   * Localized dialog buttons and icons [#2207](https://github.com/getgrav/grav-plugin-admin/pull/2207)
+   * Updated copyright year
+
+# v1.10.25
+## 11/16/2021
+
+3. [](#bugfix)
+   * Fixed unescaped messages in JSON responses
+
+# v1.10.24
+## 10/26/2021
+
+1. [](#new)
+   * Require **Grav 1.7.24**
+2. [](#improved)
+   * Use new `Http\Response` rather than deprecated `GPM\Response`
+3. [](#bugfix)
+   * Fixed an issue with invalid HTML throwing errors on HTML security scanning
+   * Clear cache when installing plugins
+
+# v1.10.23
+## 09/29/2021
+
+1. [](#new)
+   * Updated SCSS compiler to v1.8
+2. [](#improved)
+   * Updated with latest language strings from Crowdin.com
+3. [](#bugfix)
+   * Fixed images from plugins/themes disappearing when saving twice
+
+# v1.10.22
+## 09/16/2021
+
+1. [](#new)
+    * Updated SCSS compiler to v1.7
+
+# v1.10.21
+## 09/14/2021
+
+1. [](#new)
+    * Require **Grav 1.7.21**
+2. [](#improved)
+    * Added a note about UTC times in scheduler AT syntax help
+    * Now using a monospaced text-based scheduler AT field in scheduler for simplicity
+    * Improved `Admin:data()` and `Admin::getConfigurationData()` to be more strict
+3. [](#bugfix)
+    * Fixed configuration save location to point to existing config folder [#2176](https://github.com/getgrav/grav-plugin-admin/issues/2176)
+
+# v1.10.20
+## 09/01/2021
+
+1. [](#bugfix)
+    * Fixed regression `Argument 4 passed to Grav\Plugin\Form\TwigExtension::prepareFormField() must be of the type array` [#2177](https://github.com/getgrav/grav-plugin-admin/issues/2177)
+    * Fixed `X-Frame-Options` to be `DENY` in all admin pages to prevent a clickjacking attack
+
+# v1.10.19
+## 08/31/2021
+
+1. [](#new)
+    * Require **Grav 1.7.19** and **Form 5.1.0** and **Login 3.5.0**
+    * Updated SCSS compiler to v1.6
+2. [](#improved)
+    * Updated forms and nested fields to use new form logic
+    * Admin form now use layout `admin`, meaning you can create admin specific field templates by `forms/fields/myfield/admin-field.html.twig`
+    * Stop using `|tu` filter, Grav already has the same logic in `|t` for admin
+    * Remove unneeded escapes
+    * Allow removal of plugin when disabled [#2167](https://github.com/getgrav/grav-plugin-admin/issues/2167)
+3. [](#bugfix)
+    * Fixed missing values in `fieldset` form field
+
+# v1.10.18
+## 07/19/2021
+
+1. [](#improved)
+    * Add logic to allow fieldset form field inside a list field [#2159](https://github.com/getgrav/grav-plugin-admin/pull/2159)
+
+# v1.10.17
+## 06/15/2021
+
+1. [](#improved)
+    * Added timestamp as title in logs date [#2141](https://github.com/getgrav/grav-plugin-admin/issues/2141)
+    * Use `base64_encode` filter rather than function
+    * Composer update
+1. [](#bugfix)
+    * Fixed missing `Remove Theme` button when the theme is inactive
+    * Update taskGetChildTypes() to use Flex Pages (works without the plugin) [#2087](https://github.com/getgrav/grav-plugin-admin/issues/2087)
+
+# v1.10.16
+## 06/02/2021
+
+1. [](#bugfix)
+    * Fixed issue with some elements overflowing closed list items [#2146](https://github.com/getgrav/grav-plugin-admin/issues/2146)
+    * Fixed configuration not fully updating on save [#2149](https://github.com/getgrav/grav-plugin-admin/issues/2149)
+    * Fixed display issue with "+ Add Page" and picking a different route [#2136](https://github.com/getgrav/grav-plugin-admin/issues/2136), [#2145](https://github.com/getgrav/grav-plugin-admin/issues/2145)
+    * Treat WebP as image when inserting / drag & dropping [#2150](https://github.com/getgrav/grav-plugin-admin/issues/2150)
+
+# v1.10.15
+## 05/19/2021
+
+1. [](#new)
+    * Updated SCSS compiler to v1.5
+1. [](#improved)
+    * Updated node modules dev dependencies
+    * Package.json scripts cleanup
+    * Recompiled JS for production
+    * Use `base645_encode` filter rather than function
+    * Editor: Do not assume images URLs are going to be `http://` (wrong assumption plus not SSL) [#2127](https://github.com/getgrav/grav-plugin-admin/issues/2127)
+    * Improved Theme Activation + Plugin Enabled logic to ensure configuration is not displayed unless activation/enabled state. Fixes [#2140](https://github.com/getgrav/grav-plugin-admin/issues/2140)
+1. [](#bugfix)
+    * Fixed issue with slugify where single curly quotes in titles would translate to straight single quote [#2101](https://github.com/getgrav/grav-plugin-admin/issues/2101)
+    * Fix z-index issue with fullscreeen editor (and toolips) [#2143](https://github.com/getgrav/grav-plugin-admin/issues/2143)
+
+# v1.10.14
+## 04/29/2021
+
+1. [](#improved)
+    * Added a `min_height:` option for list field
+1. [](#bugfix)
+    * Fixed z-index issue for tooltips in sidebar
+    * Fixed custom files being overridden during theme update [#2135](https://github.com/getgrav/grav-plugin-admin/issues/2135)
+
+# v1.10.13
+## 04/23/2021
+
+1. [](#new)
+    * Added refresh action button for Folder to ease the regeneration of the slug based on the title. Available also as API entry `Grav.default.Forms.Fields.FolderField.Regenerate()` [#1738](https://github.com/getgrav/grav-plugin-admin/issues/1738)
+1. [](#improved)
+    * Removed sourcemaps references from fork-awesome.min.css [#2122](https://github.com/getgrav/grav-plugin-admin/issues/2122)
+    * Support native spell checkers in CodeMirror editor [#1266](https://github.com/getgrav/grav-plugin-admin/issues/1266)
+    * Added new 'Content Highlight' color to presets
+    * Copying Pages now prompts a dedicated modal that allows for picking title, folder name, parent location, page template and visibility [#1738](https://github.com/getgrav/grav-plugin-admin/issues/1738)
+    * Updated with latest language translations from Crowdin.com
+1. [](#bugfix)
+    * Moved preset CSS compile to earlier in the process to ensure compilation happens in time.
+    * Prevent Save actions from Flex Objects to trigger the unsaved unload notice [#2125](https://github.com/getgrav/grav-plugin-admin/issues/2125)
+    * Fixed audit vulnerabilities in module dependencies and house cleanup [#2096](https://github.com/getgrav/grav-plugin-admin/issues/2096)
+    * Fixed issue preventing Drag & Drop of media files while in Expert Mode [#1927](https://github.com/getgrav/grav-plugin-admin/issues/1927)
+    * Fixed broken link colors in `preset.css` which was causing issues with tabs and dropdowns
+    * Fixed permissions for page related tasks and actions
+    * Fixed permission check for configuration save [#2130](https://github.com/getgrav/grav-plugin-admin/issues/2130)
+    * Fixed missing/wrong page categories and tags when multi-language support is enabled [#2107](https://github.com/getgrav/grav-plugin-admin/issues/2107)
+
+# v1.10.12
+## 04/15/2021
+
+1. [](#bugfix)
+    * Regression: Fixed broken plugin/theme installer in admin
+    * Fixed error reporting for AJAX tasks if user has no permissions
+    * Fixed missing slash in password reset URL [#2119](https://github.com/getgrav/grav-plugin-admin/issues/2119)
+
+# v1.10.11
+## 04/13/2021
+
+1. [](#bugfix)
+    * **IMPORTANT** Fixed security vulnerability that allows installation of plugins with minimal admin privileges [GHSA-wg37-cf5x-55hq](https://github.com/getgrav/grav-plugin-admin/security/advisories/GHSA-wg37-cf5x-55hq)
+    * Fixed `You have been logged out` message when entering to 2FA authentication due to `/admin/task:getNotifications` AJAX call
+    * Fixed broken 2FA login when site is not configured to use Flex Users [#2109](https://github.com/getgrav/grav-plugin-admin/issues/2109)
+    * Fixed error message when user clicks logout link after the session has been expired
+
+# v1.10.10
+## 04/07/2021
+
+1. [](#bugfix)
+    * Fixed missing `admin-preset.css` in multisite environments
+    * Regression: Fixed broken 2FA form [#2109](https://github.com/getgrav/grav-plugin-admin/issues/2109)
+
+# v1.10.9
+## 04/06/2021
+
+1. [](#new)
+    * Requires **Grav 1.7.10**
+1. [](#improved)
+    * Better isolate admin to prevent session related vulnerabilities
+    * Removed support for custom login redirects for improved security
+    * Shorten forgot password link lifetime from 7 days to 1 hour
+    * Updated with latest language translations from Crowdin.com
+1. [](#bugfix)
+    * Fixed issue where Adding a new page and canceling from within Editing would alter the Parent location of the edited page [#2067](https://github.com/getgrav/grav-plugin-admin/issues/2067)
+    * Fixed and enhanced Range field to be Lists compatible [#2062](https://github.com/getgrav/grav-plugin-admin/issues/2062)
+    * Fixed ERR_TOO_MANY_REDIRECTS with HTTPS = 'On' [#2100](https://github.com/getgrav/grav-plugin-admin/issues/2100)
+    * Prevent expert editing mode from anyone else than super users [#2094](https://github.com/getgrav/grav-plugin-admin/issues/2094)
+    * Fixed login related pages being accessible from admin when user has logged in
+    * Fixed admin user creation and password reset allowing unsafe passwords
+    * Fixed missing validation when registering the first admin user
+    * Fixed reset password email not to have session specific token in it
+    * Fixed admin controller running before setting `$grav['page']`
+
 # v1.10.8
 ## 03/19/2021
 

@@ -1,0 +1,252 @@
+<?php
+namespace Grav\Plugin;
+
+use Grav\Common\Plugin;
+use Grav\Plugin\MigrateGrav\HtaccessSecurity;
+use Grav\Plugin\MigrateGrav\Kickoff;
+use RocketTheme\Toolbox\Event\Event;
+use RuntimeException;
+
+class MigrateGravPlugin extends Plugin
+{
+    /**
+     * Grav 2.0 requires PHP 8.3. The wizard and the Kickoff/HtaccessSecurity
+     * classes use newer syntax, so on older PHP they fatal at parse time
+     * before any friendly check can run. Everything that loads them is gated
+     * on this, and this file itself must stay parseable on PHP 7.3.
+     */
+    public const MIN_PHP = '8.3.0';
+
+    public static function phpSupported(): bool
+    {
+        return version_compare(PHP_VERSION, self::MIN_PHP, '>=');
+    }
+
+    public static function getSubscribedEvents(): array
+    {
+        return [
+            'onPluginsInitialized' => ['onPluginsInitialized', 0],
+        ];
+    }
+
+    public function onPluginsInitialized(): void
+    {
+        if (!$this->isAdmin()) {
+            return;
+        }
+
+        $this->enable([
+            'onAdminMenu' => ['onAdminMenu', 0],
+            'onAdminTwigTemplatePaths' => ['onAdminTwigTemplatePaths', 0],
+            'onAdminTaskExecute' => ['onAdminTaskExecute', 0],
+            'onTwigSiteVariables' => ['onTwigSiteVariables', 0],
+        ]);
+    }
+
+    public function onAdminMenu(): void
+    {
+        $this->grav['twig']->plugins_hooked_nav['Migrate to Grav 2.0'] = [
+            'route' => 'migrate-grav',
+            'icon' => 'fa-rocket',
+        ];
+    }
+
+    public function onAdminTwigTemplatePaths(Event $event): void
+    {
+        $paths = $event['paths'];
+        $paths[] = __DIR__ . '/admin/templates';
+        $event['paths'] = $paths;
+    }
+
+    public function onAdminTaskExecute(Event $event): void
+    {
+        $task = $event['method'] ?? null;
+
+        if (is_string($task) && strpos($task, 'taskMigrateGrav') === 0 && !self::phpSupported()) {
+            $this->grav['admin']->setMessage(
+                'Grav 2.0 requires PHP 8.3 or newer and will not run on PHP ' . PHP_VERSION . '. Upgrade this site\'s PHP before migrating.',
+                'error'
+            );
+            return;
+        }
+
+        $controller = $event['controller'] ?? null;
+        $authorized = !$controller
+            || !method_exists($controller, 'isAuthorizedFunction')
+            || $controller->isAuthorizedFunction('admin.super');
+
+        if ($task === 'taskMigrateGravInit') {
+            if (!$authorized) {
+                $this->grav['admin']->setMessage('Super admin required to start migration.', 'error');
+                return;
+            }
+            try {
+                $payload = $this->runKickoff('admin');
+            } catch (RuntimeException $e) {
+                $this->grav['admin']->setMessage('Migration kickoff failed: ' . $e->getMessage(), 'error');
+                return;
+            }
+            $this->grav->redirect($payload['wizard_url'], 302);
+            return;
+        }
+
+        if ($task === 'taskMigrateGravSecureHtaccess') {
+            if (!$authorized) {
+                $this->grav['admin']->setMessage('Super admin required to secure the webserver config.', 'error');
+                return;
+            }
+            $result = $this->newHtaccessSecurity()->applyFix();
+            if ($result['errors']) {
+                $this->grav['admin']->setMessage(
+                    'Could not fully secure the user/ folders: ' . implode('; ', $result['errors']),
+                    'error'
+                );
+            } else {
+                $done = [];
+                if ($result['patched']) {
+                    $done[] = 'added the folder block to .htaccess';
+                }
+                if ($result['created']) {
+                    $done[] = 'created ' . implode(', ', $result['created']);
+                }
+                $this->grav['admin']->setMessage(
+                    $done ? 'Secured the sensitive user/ folders: ' . implode('; ', $done) . '.'
+                          : 'The sensitive user/ folders were already protected.',
+                    'info'
+                );
+            }
+            $this->grav->redirect($this->grav['admin']->getAdminRoute('/migrate-grav'), 302);
+            return;
+        }
+
+        if ($task === 'taskMigrateGravReset' || $task === 'taskMigrateGravRestart') {
+            $isRestart = $task === 'taskMigrateGravRestart';
+            $verb      = $isRestart ? 'restart wizard' : 'reset migration';
+            if (!$authorized) {
+                $this->grav['admin']->setMessage("Super admin required to {$verb}.", 'error');
+                return;
+            }
+            $result = $this->runReset($isRestart ? 'restart' : 'full');
+            if ($result['errors']) {
+                $label = $isRestart ? 'Restart' : 'Reset';
+                $this->grav['admin']->setMessage("{$label} incomplete: " . implode('; ', $result['errors']), 'error');
+            } else {
+                if (!$result['removed']) {
+                    $msg = $isRestart ? 'Nothing to restart — no migration is staged.' : 'Nothing to reset.';
+                } else {
+                    $msg = ($isRestart ? 'Wizard restarted. ' : 'Migration reset. ')
+                        . 'Removed: ' . implode(', ', $result['removed']);
+                }
+                $this->grav['admin']->setMessage($msg, 'info');
+            }
+
+            // Restart preserves .migrating, so send the user back into the
+            // wizard at the staged step. Full reset has nothing to resume —
+            // return to the migrate-grav admin page.
+            if ($isRestart && !$result['errors']) {
+                $state = $this->newKickoff()->readFlag();
+                if (!empty($state['wizard_url'])) {
+                    $this->grav->redirect($state['wizard_url'], 302);
+                    return;
+                }
+            }
+            // Pass the Route object directly — Grav::redirect() handles
+            // Route instances via toString(true), which already includes the
+            // install base and admin route (no doubling, no manual stitching).
+            $this->grav->redirect($this->grav['admin']->getAdminRoute('/migrate-grav'), 302);
+            return;
+        }
+    }
+
+    /**
+     * Shared kickoff entry point used by both admin and CLI.
+     */
+    public function runKickoff(string $trigger, ?string $adminUser = null): array
+    {
+        return $this->newKickoff()->run([
+            'grav_version' => GRAV_VERSION,
+            'admin_user' => $adminUser,
+            'trigger' => $trigger,
+        ]);
+    }
+
+    /**
+     * Shared reset entry point used by admin and CLI.
+     *
+     * @param string $mode 'full' nukes everything; 'restart' keeps the staged
+     *                     zip + flag and rewinds the wizard to step='staged'.
+     */
+    public function runReset(string $mode = 'full'): array
+    {
+        return $this->newKickoff()->reset($mode);
+    }
+
+    /**
+     * Expose the current .migrating state to admin twig templates, so the
+     * migrate-grav page can switch between "Start" and "Continue/Reset" UI
+     * without round-tripping through an AJAX call.
+     */
+    public function onTwigSiteVariables(): void
+    {
+        // Only attach the flag state on the migrate-grav admin page. Checking
+        // the request URI is more reliable than poking admin internals.
+        $path = (string) $this->grav['uri']->path();
+        if (!str_ends_with(rtrim($path, '/'), '/migrate-grav')) {
+            return;
+        }
+
+        $this->grav['twig']->twig_vars['migrate_grav_php'] = [
+            'ok'       => self::phpSupported(),
+            'version'  => PHP_VERSION,
+            'required' => self::MIN_PHP,
+        ];
+        if (!self::phpSupported()) {
+            return;
+        }
+
+        $state = $this->newKickoff()->readFlag();
+        $this->grav['twig']->twig_vars['migrate_grav_state'] = $state;
+
+        $security = $this->newHtaccessSecurity();
+        $status = $security->status();
+        $status['snippet'] = $status['protected'] ? '' : $security->manualSnippet();
+        $this->grav['twig']->twig_vars['migrate_grav_security'] = $status;
+
+        // Whether this host can actually download the Grav 2.0 zip. Caught here
+        // so the operator sees the problem before clicking "Stage & start
+        // wizard" rather than hitting a generic kickoff failure (issue #12).
+        require_once __DIR__ . '/classes/Kickoff.php';
+        $localZip = (string) $this->config->get('plugins.migrate-grav.source_local_zip', '');
+        $this->grav['twig']->twig_vars['migrate_grav_readiness'] = Kickoff::downloadReadiness($localZip);
+    }
+
+    private function newHtaccessSecurity(): HtaccessSecurity
+    {
+        require_once __DIR__ . '/classes/HtaccessSecurity.php';
+
+        $webroot = defined('GRAV_WEBROOT') ? GRAV_WEBROOT : GRAV_ROOT;
+
+        return new HtaccessSecurity($webroot);
+    }
+
+    private function newKickoff(): Kickoff
+    {
+        require_once __DIR__ . '/classes/Kickoff.php';
+
+        $config  = (array) $this->config->get('plugins.migrate-grav', []);
+        $webroot = defined('GRAV_WEBROOT') ? GRAV_WEBROOT : GRAV_ROOT;
+
+        // Forward the site's GPM channel so Kickoff can match the release
+        // channel the rest of the admin uses (?testing vs stable).
+        $config['gpm_channel'] = (string) $this->grav['config']->get('system.gpm.releases', 'stable');
+
+        // Forward Grav's proxy config so both the Kickoff's own zip download
+        // AND the standalone wizard (via the .migrating flag) honor it.
+        // Sites behind a corporate proxy were silently breaking on every
+        // outbound call (GPM catalog, GitHub release lookups, the 2.0 zip).
+        $config['proxy_url']       = (string) $this->grav['config']->get('system.http.proxy_url', '');
+        $config['proxy_cert_path'] = (string) $this->grav['config']->get('system.http.proxy_cert_path', '');
+
+        return new Kickoff($webroot, $config);
+    }
+}

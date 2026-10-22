@@ -1,4 +1,5 @@
 <?php
+
 namespace Grav\Plugin\Form;
 
 use ArrayAccess;
@@ -12,6 +13,7 @@ use Grav\Common\Grav;
 use Grav\Common\Inflector;
 use Grav\Common\Language\Language;
 use Grav\Common\Page\Interfaces\PageInterface;
+use Grav\Common\Page\Pages;
 use Grav\Common\Security;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
@@ -117,7 +119,7 @@ class Form implements FormInterface, ArrayAccess
             $this->items = $form;
         } else {
             // Otherwise get all forms in the page.
-            $forms = $page->forms();
+            $forms = $page->getForms();
             if ($name) {
                 // If form with given name was found, use that.
                 $this->items = $forms[$name] ?? [];
@@ -160,6 +162,10 @@ class Form implements FormInterface, ArrayAccess
 
         if (empty($this->items['nonce']['action'])) {
             $this->items['nonce']['action'] = 'form';
+        }
+
+        if (Utils::isPositive($this->items['disabled'] ?? false)) {
+            $this->disable();
         }
 
         // Initialize form properties.
@@ -234,12 +240,16 @@ class Form implements FormInterface, ArrayAccess
                 if ($file) {
                     $imagePath = $original->getTmpFile();
                     $thumbPath = $file->getTmpFile();
+                    // Filenames may contain '#' or '?' which would otherwise be
+                    // treated as URL fragment/query delimiters by the browser.
+                    $imageRel = str_replace(['#', '?'], ['%23', '%3F'], Folder::getRelativePath($imagePath));
+                    $thumbRel = str_replace(['#', '?'], ['%23', '%3F'], Folder::getRelativePath($thumbPath));
                     $list[$basename] = [
                         'name' => $file->getClientFilename(),
                         'type' => $file->getClientMediaType(),
                         'size' => $file->getSize(),
-                        'image_url' => $url->rootUrl() . '/' . Folder::getRelativePath($imagePath) . '?' . filemtime($imagePath),
-                        'thumb_url' => $url->rootUrl() . '/' . Folder::getRelativePath($thumbPath) . '?' . filemtime($thumbPath),
+                        'image_url' => $url->rootUrl() . '/' . $imageRel . '?' . filemtime($imagePath),
+                        'thumb_url' => $url->rootUrl() . '/' . $thumbRel . '?' . filemtime($thumbPath),
                         'cropData' => $original->getMetaData()['crop'] ?? []
                     ];
                 }
@@ -390,11 +400,21 @@ class Form implements FormInterface, ArrayAccess
     /**
      * Return page object for the form.
      *
+     * Can be called only after onPageInitialize event has fired.
+     *
      * @return PageInterface
+     * @throws \LogicException
      */
     public function getPage(): PageInterface
     {
-        return Grav::instance()['pages']->dispatch($this->page);
+        /** @var Pages $pages */
+        $pages = Grav::instance()['pages'];
+        $page = $pages->find($this->page);
+        if (null === $page) {
+            throw new \LogicException('Form::getPage() method was called too early!');
+        }
+
+        return $page;
     }
 
     /**
@@ -446,7 +466,12 @@ class Form implements FormInterface, ArrayAccess
     public function value($name = null, $fallback = false)
     {
         if (!$name) {
-            return $this->data;
+            // Return the values as a plain array rather than the Data object.
+            // Twig resolves `form.value.<field>` as native array access, which
+            // the content sandbox does not gate — a Data object would trip the
+            // sandbox on the sub-key (regression #4207) and, more broadly, this
+            // is the safer "get all values" contract to hand a template.
+            return $this->data ? $this->data->toArray() : [];
         }
 
         if (isset($this->data[$name])) {
@@ -534,6 +559,10 @@ class Form implements FormInterface, ArrayAccess
         $url = $uri->url;
         $post = $uri->post();
 
+        if (!empty($post['__unique_form_id__'])) {
+            $this->setUniqueId($post['__unique_form_id__']);
+        }
+
         $name = $post['name'] ?? null;
         $task = $post['task'] ?? null;
 
@@ -560,7 +589,11 @@ class Form implements FormInterface, ArrayAccess
         $grav->fireEvent('onFormUploadSettings', new Event(['settings' => &$settings, 'post' => $post]));
 
         $upload = json_decode(json_encode($this->normalizeFiles($_FILES['data'], $settings->name)), true);
-        $filename = $post['filename'] ?? $upload['file']['name'];
+        // Strip any path component from the POST-supplied filename. The admin
+        // controllers already do this; the public form path historically did
+        // not, which let an attacker collide the upload with files outside
+        // the intended destination.
+        $filename = Utils::basename((string) ($post['filename'] ?? $upload['file']['name']));
         $field = $upload['field'];
 
         // Handle errors and breaks without proceeding further
@@ -582,6 +615,21 @@ class Form implements FormInterface, ArrayAccess
                 'status'  => 'error',
                 'message' => sprintf($language->translate('PLUGIN_FORM.FILEUPLOAD_UNABLE_TO_UPLOAD', null),
                     $filename, 'Bad filename')
+            ];
+        }
+
+        // Hard-block page-content extensions regardless of the configurable
+        // dangerous-extensions list. With destination: self@ (the default),
+        // an upload lands in the page directory, and a permissive accept
+        // policy would otherwise let an unauthenticated user overwrite the
+        // page's own .md/.yaml — turning a file upload into arbitrary
+        // page-content takeover (GHSA-w4rc-p66m-x6qq).
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+        if (in_array($extension, ['md', 'yaml', 'yml', 'json', 'twig', 'ini'], true)) {
+            return [
+                'status'  => 'error',
+                'message' => sprintf($language->translate('PLUGIN_FORM.FILEUPLOAD_UNABLE_TO_UPLOAD', null),
+                    $filename, 'File type not allowed')
             ];
         }
 
@@ -611,7 +659,7 @@ class Form implements FormInterface, ArrayAccess
                 break;
             }
 
-            $isMime = strstr($type, '/');
+            $isMime = strstr((string) $type, '/');
             $find   = str_replace(['.', '*', '+'], ['\.', '.*', '\+'], $type);
 
             if ($isMime) {
@@ -645,6 +693,7 @@ class Form implements FormInterface, ArrayAccess
         // Handle file size limits
         $settings->filesize *= self::BYTES_TO_MB; // 1024 * 1024 [MB in Bytes]
         if ($settings->filesize > 0 && $upload['file']['size'] > $settings->filesize) {
+            $grav['log']->warning(sprintf('Form upload rejected: %s (%d bytes) exceeds limit %d bytes', $filename, $upload['file']['size'], $settings->filesize));
             // json_response
             return [
                 'status'  => 'error',
@@ -732,7 +781,7 @@ class Form implements FormInterface, ArrayAccess
      * @param Language|null $language
      * @return string File upload error message
      */
-    public function getFileUploadError(int $error, Language $language = null): string
+    public function getFileUploadError(int $error, ?Language $language = null): string
     {
         if (!$language) {
             $grav = Grav::instance();
@@ -876,6 +925,16 @@ class Form implements FormInterface, ArrayAccess
             $this->data->merge($data);
         }
 
+        if (!empty($post['__unique_form_id__'])) {
+            $this->setUniqueId($post['__unique_form_id__']);
+        }
+
+        // Ensure file field values are populated from the flash storage before validation.
+        $flash = $this->getFlash();
+        if ($flash->exists()) {
+            $this->setAllFiles($flash);
+        }
+
         // Validate and filter data
         try {
             $grav->fireEvent('onFormPrepareValidation', new Event(['form' => $this]));
@@ -883,17 +942,41 @@ class Form implements FormInterface, ArrayAccess
             $this->data->validate();
             $this->data->filter();
 
-            $grav->fireEvent('onFormValidationProcessed', new Event(['form' => $this]));
-        } catch (ValidationException $e) {
-            $this->status = 'error';
-            $event = new Event(['form' => $this, 'message' => $e->getMessage(), 'messages' => $e->getMessages()]);
-            $grav->fireEvent('onFormValidationError', $event);
-            if ($event->isPropagationStopped()) {
-                return;
+            // Add special handling for file/filepond fields
+            foreach ($this->fields as $field) {
+                // Don't restrict to just type=file, but also other file based as long as they have filesize && accept
+                if (isset($field['filesize']) && isset($field['accept']) &&
+                    isset($field['validate']['required']) &&
+                    $field['validate']['required']) {
+
+                    // Get field name
+                    $fieldName = $field['name'];
+                    $fieldLabel = $field['label'] ?? $field['name'];
+
+                    // Check if files exist in the session for this field
+                    $flashObject = $this->getFlash();
+                    if ($flashObject->exists()) {
+                        $filesInField = $flashObject->getFilesByField($fieldName);
+
+                        // If no files found, add validation error
+                        if (empty($filesInField)) {
+                            $this->setError("$fieldLabel " . $grav['language']->translate("PLUGIN_FORM.FIELD_REQUIRED"));
+                            throw new ValidationException();
+                        }
+                    } else {
+                        // No flash object with files found
+                        $this->setError("$fieldLabel " . $grav['language']->translate("PLUGIN_FORM.FIELD_REQUIRED"));
+                        throw new ValidationException();
+                    }
+                }
             }
-        } catch (RuntimeException $e) {
+
+            $grav->fireEvent('onFormValidationProcessed', new Event(['form' => $this]));
+        } catch (ValidationException | RuntimeException $e) {
             $this->status = 'error';
-            $event = new Event(['form' => $this, 'message' => $e->getMessage(), 'messages' => []]);
+            $this->message = $this->message ?? $e->getMessage();
+            $this->messages = array_merge($this->messages, $e->getMessages());
+            $event = new Event(['form' => $this, 'message' => $this->message, 'messages' => $this->messages]);
             $grav->fireEvent('onFormValidationError', $event);
             if ($event->isPropagationStopped()) {
                 return;
@@ -902,10 +985,11 @@ class Form implements FormInterface, ArrayAccess
 
         $redirect = $redirect_code = null;
         $process = $this->items['process'] ?? [];
-        $legacyUploads = !isset($process['upload']) || $process['upload'] !== false;
+        $legacyUploads = !isset($process['upload']) || $process['upload'] !== true;
 
         if ($legacyUploads) {
             $this->legacyUploads();
+            $this->copyFiles();
         }
 
         if (is_array($process)) {
@@ -931,10 +1015,6 @@ class Form implements FormInterface, ArrayAccess
                     break;
                 }
             }
-        }
-
-        if ($legacyUploads) {
-            $this->copyFiles();
         }
 
         $this->getFlash()->delete();
@@ -1111,11 +1191,11 @@ class Form implements FormInterface, ArrayAccess
     }
 
     /**
-     * @param string $field
-     * @param string $filename
+     * @param string|null $field
+     * @param string|null $filename
      * @return Route|null
      */
-    public function getFileDeleteAjaxRoute($field, $filename): ?Route
+    public function getFileDeleteAjaxRoute($field = null, $filename = null): ?Route
     {
         $route = Uri::getCurrentRoute()->withExtension('json')->withGravParam('task', 'file-remove');
 
@@ -1219,6 +1299,10 @@ class Form implements FormInterface, ArrayAccess
         $post = $uri->post();
         $post['data'] = $this->decodeData($post['data'] ?? []);
 
+        if (!empty($post['__unique_form_id__'])) {
+            $this->setUniqueId($post['__unique_form_id__']);
+        }
+
         if (empty($post['form-nonce']) || !Utils::verifyNonce($post['form-nonce'], 'form')) {
             throw new RuntimeException('Bad Request: Nonce is missing or invalid', 400);
         }
@@ -1240,7 +1324,7 @@ class Form implements FormInterface, ArrayAccess
      * @param string|null $field
      * @return void
      */
-    protected function removeFlashUpload(string $filename, string $field = null)
+    protected function removeFlashUpload(string $filename, ?string $field = null)
     {
         $flash = $this->getFlash();
         $flash->removeFile($filename, $field);

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -32,8 +32,32 @@ use function in_array;
 class ImageFile extends Image
 {
     /**
+     * Image constructor with adapter configuration from Grav.
+     *
+     * @param string|null $originalFile
+     * @param int|null $width
+     * @param int|null $height
+     */
+    public function __construct($originalFile = null, $width = null, $height = null)
+    {
+        parent::__construct($originalFile, $width, $height);
+        
+        // Set the adapter based on Grav configuration
+        $grav = Grav::instance();
+        $adapter = $grav['config']->get('system.images.adapter', 'gd');
+        try {
+            $this->setAdapter($adapter);
+        } catch (Exception $e) {
+            $grav['log']->error(
+                'Image adapter "' . $adapter . '" is not available. Falling back to GD adapter.'
+            );
+        }
+    }
+
+    /**
      * Destruct also image object.
      */
+    #[\ReturnTypeWillChange]
     public function __destruct()
     {
         $adapter = $this->adapter;
@@ -178,7 +202,7 @@ class ImageFile extends Image
             throw new RuntimeException('You need to EXIF PHP Extension to use this function');
         }
 
-        if (!in_array(exif_imagetype($this->source->getInfos()), [IMAGETYPE_JPEG, IMAGETYPE_TIFF_II, IMAGETYPE_TIFF_MM], true)) {
+        if (!file_exists($this->source->getInfos()) || !in_array(exif_imagetype($this->source->getInfos()), [IMAGETYPE_JPEG, IMAGETYPE_TIFF_II, IMAGETYPE_TIFF_MM], true)) {
             return $this;
         }
 

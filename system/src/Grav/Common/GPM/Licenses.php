@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\GPM
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -63,7 +63,7 @@ class Licenses
      * Returns the license for a Premium package
      *
      * @param string|null $slug
-     * @return array|string
+     * @return string[]|string
      */
     public static function get($slug = null)
     {

@@ -3,9 +3,7 @@
 use Clockwork\Clockwork;
 use Clockwork\Support\Lumen\ClockworkSupport;
 
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
-use Illuminate\Http\Request;
+use Illuminate\Http\{JsonResponse, RedirectResponse, Request};
 use Laravel\Lumen\Routing\Controller as LumenController;
 use Laravel\Telescope\Telescope;
 
@@ -83,7 +81,7 @@ class Controller extends LumenController
 	{
 		$this->ensureClockworkIsEnabled();
 
-		return new RedirectResponse($request->path() . '/app');
+		return new RedirectResponse('/' . $request->path() . '/app');
 	}
 
 	// Ensure Clockwork is still enabled at this point and stop Telescope recording if present

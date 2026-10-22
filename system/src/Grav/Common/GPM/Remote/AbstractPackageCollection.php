@@ -3,15 +3,15 @@
 /**
  * @package    Grav\Common\GPM
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\GPM\Remote;
 
 use Grav\Common\Grav;
+use Grav\Common\HTTP\Response;
 use Grav\Common\GPM\Common\AbstractPackageCollection as BaseCollection;
-use Grav\Common\GPM\Response;
 use \Doctrine\Common\Cache\FilesystemCache;
 use RuntimeException;
 
@@ -49,7 +49,7 @@ class AbstractPackageCollection extends BaseCollection
         $cache_dir = Grav::instance()['locator']->findResource('cache://gpm', true, true);
         $this->cache = new FilesystemCache($cache_dir);
 
-        $this->repository = $repository . '?v=' . GRAV_VERSION . '&' . $channel . '=1';
+        $this->repository = $repository . '?v=' . GRAV_VERSION . '&php=' . PHP_VERSION . '&' . $channel . '=1';
         $this->raw        = $this->cache->fetch(md5($this->repository));
 
         $this->fetch($refresh, $callback);

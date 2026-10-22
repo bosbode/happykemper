@@ -22,19 +22,18 @@
     "require": {
         "php": "^7.3.6 || ^8.0",
         "ext-json": "*",
-        "p3k/picofeed": "@stable",
-        "scssphp/scssphp": "^1.4"
+        "scssphp/scssphp": "^1.13",
+        "p3k/picofeed": "^1.0"
     },
     "require-dev": {
-        "codeception/codeception": "^2.4",
-        "fzaninotto/faker": "^1.8",
+        "codeception/codeception": "^2.5",
+        "fzaninotto/faker": "^1.9",
         "symfony/yaml": "~4.4",
         "symfony/console": "~4.4",
         "symfony/finder": "~4.4",
         "symfony/event-dispatcher": "~4.4"
     },
     "replace": {
-        "symfony/polyfill-php72": "*",
         "symfony/polyfill-php73": "*"
     },
     "autoload": {
@@ -53,5 +52,11 @@
     "scripts": {
         "test": "vendor/bin/codecept run unit",
         "test-windows": "vendor\\bin\\codecept run unit"
-    }
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/rhukster/picoFeed"
+        }
+    ]
 }

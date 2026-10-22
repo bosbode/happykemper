@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -22,10 +22,9 @@ use Grav\Framework\Flex\FlexIndex;
  * @method FlexPageIndex withPublished(bool $bool = true)
  * @method FlexPageIndex withVisible(bool $bool = true)
  *
- * @template TKey
  * @template T of FlexPageObject
  * @template C of FlexPageCollection
- * @extends FlexIndex<TKey,T,C>
+ * @extends FlexIndex<T,C>
  */
 class FlexPageIndex extends FlexIndex
 {

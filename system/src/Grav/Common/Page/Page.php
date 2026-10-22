@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -84,7 +84,7 @@ class Page implements PageInterface
     protected $unpublish_date;
     /** @var string */
     protected $slug;
-    /** @var string */
+    /** @var string|null */
     protected $route;
     /** @var string|null */
     protected $raw_route;
@@ -196,7 +196,7 @@ class Page implements PageInterface
         }
 
         // extract page language from page extension
-        $language = trim(basename($this->extension(), 'md'), '.') ?: null;
+        $language = trim(Utils::basename($this->extension(), 'md'), '.') ?: null;
         $this->language($language);
 
         $this->hide_home_route = $config->get('system.home.hide_in_urls', false);
@@ -216,6 +216,26 @@ class Page implements PageInterface
         $this->urlExtension();
 
         return $this;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function __clone()
+    {
+        $this->initialized = false;
+        $this->header = $this->header ? clone $this->header : null;
+    }
+
+    /**
+     * @return void
+     */
+    public function initialize(): void
+    {
+        if (!$this->initialized) {
+            $this->initialized = true;
+            $this->route = null;
+            $this->raw_route = null;
+            $this->_forms = null;
+        }
     }
 
     /**
@@ -368,7 +388,7 @@ class Page implements PageInterface
      * Gets and Sets the header based on the YAML configuration at the top of the .md file
      *
      * @param  object|array|null $var a YAML object representing the configuration for the file
-     * @return object      the current YAML configuration
+     * @return \stdClass      the current YAML configuration
      */
     public function header($var = null)
     {
@@ -395,15 +415,17 @@ class Page implements PageInterface
                     if (!Utils::isAdminPlugin()) {
                         // If there's a `frontmatter.yaml` file merge that in with the page header
                         // note page's own frontmatter has precedence and will overwrite any defaults
-                        $frontmatterFile = CompiledYamlFile::instance($this->path . '/' . $this->folder . '/frontmatter.yaml');
-                        if ($frontmatterFile->exists()) {
-                            $frontmatter_data = (array)$frontmatterFile->content();
+                        $frontmatter_filename = $this->path . '/' . $this->folder . '/frontmatter.yaml';
+                        if (file_exists($frontmatter_filename)) {
+                            $frontmatter_file = CompiledYamlFile::instance($frontmatter_filename);
+                            $frontmatter_data = $frontmatter_file->content();
                             $this->header = (object)array_replace_recursive(
                                 $frontmatter_data,
                                 (array)$this->header
                             );
-                            $frontmatterFile->free();
+                            $frontmatter_file->free();
                         }
+
                         // Process frontmatter with Twig if enabled
                         if (Grav::instance()['config']->get('system.pages.frontmatter.process_twig') === true) {
                             $this->processFrontmatter();
@@ -426,6 +448,9 @@ class Page implements PageInterface
         }
 
         if ($var) {
+            if (isset($this->header->modified)) {
+                $this->modified($this->header->modified);
+            }
             if (isset($this->header->slug)) {
                 $this->slug($this->header->slug);
             }
@@ -588,7 +613,15 @@ class Page implements PageInterface
 
         // Set Last-Modified header
         if ($this->lastModified()) {
-            $last_modified_date = gmdate('D, d M Y H:i:s', $this->modified()) . ' GMT';
+            $last_modified = $this->modified();
+            foreach ($this->children()->modular() as $cpage) {
+                $modular_mtime = $cpage->modified();
+                if ($modular_mtime > $last_modified) {
+                    $last_modified = $modular_mtime;
+                }
+            }
+
+            $last_modified_date = gmdate('D, d M Y H:i:s', $last_modified) . ' GMT';
             $headers['Last-Modified'] = $last_modified_date;
         }
 
@@ -602,7 +635,12 @@ class Page implements PageInterface
             $headers['Vary'] = 'Accept-Encoding';
         }
 
-        return $headers;
+
+        // Added new Headers event
+        $headers_obj = (object) $headers;
+        Grav::instance()->fireEvent('onPageHeaders', new Event(['headers' => $headers_obj]));
+
+        return (array)$headers_obj;
     }
 
     /**
@@ -975,7 +1013,7 @@ class Page implements PageInterface
     /**
      * Needed by the onPageContentProcessed event to set the raw page content
      *
-     * @param string $content
+     * @param string|null $content
      * @return void
      */
     public function setRawContent($content)
@@ -1228,15 +1266,31 @@ class Page implements PageInterface
     }
 
     /**
+     * Returns the blueprint from the page.
+     *
+     * @param string $name Not used.
+     * @return Blueprint Returns a Blueprint.
+     */
+    public function getBlueprint(string $name = '')
+    {
+        return $this->blueprints();
+    }
+
+    /**
      * Get the blueprint name for this page.  Use the blueprint form field if set
      *
      * @return string
      */
     public function blueprintName()
     {
-        $blueprint_name = filter_input(INPUT_POST, 'blueprint', FILTER_SANITIZE_STRING) ?: $this->template();
+        if (!isset($_POST['blueprint'])) {
+            return $this->template();
+        }
 
-        return $blueprint_name;
+        $post_value = $_POST['blueprint'];
+        $sanitized_value = htmlspecialchars(strip_tags($post_value), ENT_QUOTES, 'UTF-8');
+
+        return $sanitized_value ?: $this->template();
     }
 
     /**
@@ -1434,7 +1488,7 @@ class Page implements PageInterface
             $this->extension = $var;
         }
         if (empty($this->extension)) {
-            $this->extension = '.' . pathinfo($this->name(), PATHINFO_EXTENSION);
+            $this->extension = '.' . Utils::pathinfo($this->name(), PATHINFO_EXTENSION);
         }
 
         return $this->extension;
@@ -1728,7 +1782,7 @@ class Page implements PageInterface
                                 'content' => $escape ? htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $value
                             ];
 
-                            if ($hasSeparator && !Utils::startsWith($key, ['twitter', 'flattr'])) {
+                            if ($hasSeparator && !Utils::startsWith($key, ['twitter', 'flattr','fediverse'])) {
                                 $entry['property'] = $key;
                             } else {
                                 $entry['name'] = $key;
@@ -1766,7 +1820,7 @@ class Page implements PageInterface
         }
 
         if (empty($this->slug)) {
-            $this->slug = $this->adjustRouteCase(preg_replace(PAGE_ORDER_PREFIX_REGEX, '', $this->folder)) ?: null;
+            $this->slug = $this->adjustRouteCase(preg_replace(PAGE_ORDER_PREFIX_REGEX, '', (string) $this->folder)) ?: null;
         }
 
         return $this->slug;
@@ -2078,9 +2132,9 @@ class Page implements PageInterface
     {
         if ($var !== null) {
             // Filename of the page.
-            $this->name = basename($var);
+            $this->name = Utils::basename($var);
             // Folder of the page.
-            $this->folder = basename(dirname($var));
+            $this->folder = Utils::basename(dirname($var));
             // Path to the page.
             $this->path = dirname($var, 2);
         }
@@ -2095,7 +2149,7 @@ class Page implements PageInterface
      */
     public function filePathClean()
     {
-        return str_replace(ROOT_DIR, '', $this->filePath());
+        return str_replace(GRAV_ROOT . DS, '', $this->filePath());
     }
 
     /**
@@ -2119,7 +2173,7 @@ class Page implements PageInterface
     {
         if ($var !== null) {
             // Folder of the page.
-            $this->folder = basename($var);
+            $this->folder = Utils::basename($var);
             // Path to the page.
             $this->path = dirname($var);
         }
@@ -2274,11 +2328,11 @@ class Page implements PageInterface
     {
         if ($var !== null) {
             // make sure first level are arrays
-            array_walk($var, function (&$value) {
+            array_walk($var, static function (&$value) {
                 $value = (array) $value;
             });
             // make sure all values are strings
-            array_walk_recursive($var, function (&$value) {
+            array_walk_recursive($var, static function (&$value) {
                 $value = (string) $value;
             });
             $this->taxonomy = $var;

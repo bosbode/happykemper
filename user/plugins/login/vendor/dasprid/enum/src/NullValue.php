@@ -38,7 +38,17 @@ final class NullValue
      *
      * @throws SerializeNotSupportedException
      */
-    final public function __sleep() : void
+    final public function __sleep() : array
+    {
+        throw new SerializeNotSupportedException();
+    }
+
+    /**
+     * Forbid serializing enums.
+     *
+     * @throws SerializeNotSupportedException
+     */
+    final public function __serialize() : array
     {
         throw new SerializeNotSupportedException();
     }
@@ -49,6 +59,16 @@ final class NullValue
      * @throws UnserializeNotSupportedException
      */
     final public function __wakeup() : void
+    {
+        throw new UnserializeNotSupportedException();
+    }
+
+    /**
+     * Forbid unserializing enums.
+     *
+     * @throws UnserializeNotSupportedException
+     */
+    final public function __unserialize($arg) : void
     {
         throw new UnserializeNotSupportedException();
     }

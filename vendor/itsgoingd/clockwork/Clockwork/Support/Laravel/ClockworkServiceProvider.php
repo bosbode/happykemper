@@ -2,18 +2,11 @@
 
 use Clockwork\Clockwork;
 use Clockwork\Authentication\AuthenticatorInterface;
-use Clockwork\DataSource\EloquentDataSource;
-use Clockwork\DataSource\LaravelCacheDataSource;
-use Clockwork\DataSource\LaravelDataSource;
-use Clockwork\DataSource\LaravelEventsDataSource;
-use Clockwork\DataSource\LaravelNotificationsDataSource;
-use Clockwork\DataSource\LaravelQueueDataSource;
-use Clockwork\DataSource\LaravelRedisDataSource;
-use Clockwork\DataSource\LaravelTwigDataSource;
-use Clockwork\DataSource\LaravelViewsDataSource;
-use Clockwork\DataSource\SwiftDataSource;
-use Clockwork\DataSource\TwigDataSource;
-use Clockwork\DataSource\XdebugDataSource;
+use Clockwork\DataSource\{
+	EloquentDataSource, LaravelCacheDataSource, LaravelDataSource, LaravelEventsDataSource, LaravelHttpClientDataSource,
+	LaravelNotificationsDataSource, LaravelQueueDataSource, LaravelRedisDataSource, LaravelViewsDataSource, SwiftDataSource,
+	TwigDataSource, XdebugDataSource
+};
 use Clockwork\Helpers\StackFilter;
 use Clockwork\Request\Request;
 use Clockwork\Storage\StorageInterface;
@@ -24,10 +17,18 @@ class ClockworkServiceProvider extends ServiceProvider
 {
 	public function boot()
 	{
+		$this->app['clockwork.support']
+			->configureSerializer()
+			->configureShouldCollect()
+			->configureShouldRecord();
+
 		if ($this->app['clockwork.support']->isCollectingData()) {
 			$this->registerEventListeners();
 			$this->registerMiddleware();
 		}
+
+		$this->app['clockwork.support']->handleArtisanEvents();
+		$this->app['clockwork.support']->handleOctaneEvents();
 
 		// If Clockwork is disabled, return before registering middleware or routes
 		if (! $this->app['clockwork.support']->isEnabled()) return;
@@ -50,11 +51,6 @@ class ClockworkServiceProvider extends ServiceProvider
 
 		$this->app->make('clockwork.request'); // instantiate the request to have id and time available as early as possible
 
-		$this->app['clockwork.support']
-			->configureSerializer()
-			->configureShouldCollect()
-			->configureShouldRecord();
-
 		if ($this->app['clockwork.support']->getConfig('register_helpers', true)) {
 			require __DIR__ . '/helpers.php';
 		}
@@ -63,7 +59,7 @@ class ClockworkServiceProvider extends ServiceProvider
 	// Register the configuration file
 	protected function registerConfiguration()
 	{
-		$this->publishes([ __DIR__ . '/config/clockwork.php' => config_path('clockwork.php') ]);
+		$this->publishes([ __DIR__ . '/config/clockwork.php' => config_path('clockwork.php') ], 'clockwork');
 		$this->mergeConfigFrom(__DIR__ . '/config/clockwork.php', 'clockwork');
 	}
 
@@ -108,7 +104,8 @@ class ClockworkServiceProvider extends ServiceProvider
 		$this->app->singleton('clockwork.cache', function ($app) {
 			return (new LaravelCacheDataSource(
 				$app['events'],
-				$app['clockwork.support']->getConfig('features.cache.collect_queries')
+				$app['clockwork.support']->getConfig('features.cache.collect_queries'),
+				$app['clockwork.support']->getConfig('features.cache.collect_values')
 			));
 		});
 
@@ -150,11 +147,20 @@ class ClockworkServiceProvider extends ServiceProvider
 			));
 		});
 
+		$this->app->singleton('clockwork.http-requests', function ($app) {
+			return new LaravelHttpClientDataSource(
+				$app['events'],
+				$app['clockwork.support']->getConfig('features.http_requests.collect_data'),
+				$app['clockwork.support']->getConfig('features.http_requests.collect_raw_data')
+			);
+		});
+
 		$this->app->singleton('clockwork.laravel', function ($app) {
 			return (new LaravelDataSource(
 				$app,
 				$app['clockwork.support']->isFeatureEnabled('log'),
-				$app['clockwork.support']->isFeatureEnabled('routes')
+				$app['clockwork.support']->isFeatureEnabled('routes'),
+				$app['clockwork.support']->getConfig('features.routes.only_namespaces', [])
 			));
 		});
 
@@ -235,8 +241,11 @@ class ClockworkServiceProvider extends ServiceProvider
 	// Register middleware
 	protected function registerMiddleware()
 	{
-		$this->app[\Illuminate\Contracts\Http\Kernel::class]
-			->prependMiddleware(ClockworkMiddleware::class);
+		$kernel = $this->app[\Illuminate\Contracts\Http\Kernel::class];
+
+		if (method_exists($kernel, 'hasMiddleware') && $kernel->hasMiddleware(ClockworkMiddleware::class)) return;
+
+		$kernel->prependMiddleware(ClockworkMiddleware::class);
 	}
 
 	protected function registerRoutes()

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Backup
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -86,6 +86,10 @@ class Backups
         $inflector = $grav['inflector'];
 
         foreach (static::getBackupProfiles() as $id => $profile) {
+            if (!($profile['schedule'] ?? false)) {
+                continue;
+            }
+
             $at = $profile['schedule_at'];
             $name = $inflector::hyphenize($profile['name']);
             $logs = 'logs/backup-' . $name . '.out';
@@ -104,8 +108,8 @@ class Backups
      */
     public function getBackupDownloadUrl($backup, $base_url)
     {
-        $param_sep = $param_sep = Grav::instance()['config']->get('system.param_sep', ':');
-        $download = urlencode(base64_encode(basename($backup)));
+        $param_sep = Grav::instance()['config']->get('system.param_sep', ':');
+        $download = urlencode(base64_encode(Utils::basename($backup)));
         $url      = rtrim(Grav::instance()['uri']->rootUrl(true), '/') . '/' . trim(
             $base_url,
             '/'
@@ -144,9 +148,8 @@ class Backups
     public static function getTotalBackupsSize()
     {
         $backups = static::getAvailableBackups();
-        $size = array_sum(array_column($backups, 'size'));
 
-        return $size ?? 0;
+        return $backups ? array_sum(array_column($backups, 'size')) : 0;
     }
 
     /**
@@ -219,10 +222,10 @@ class Backups
         if ($locator->isStream($backup_root)) {
             $backup_root = $locator->findResource($backup_root);
         } else {
-            $backup_root = rtrim(GRAV_ROOT . $backup_root, '/');
+            $backup_root = rtrim(GRAV_ROOT . $backup_root, DS) ?: DS;
         }
 
-        if (!file_exists($backup_root)) {
+        if (!$backup_root || !file_exists($backup_root)) {
             throw new RuntimeException("Backup location: {$backup_root} does not exist...");
         }
 
@@ -316,7 +319,10 @@ class Backups
      */
     protected static function convertExclude($exclude)
     {
-        $lines = preg_split("/[\s,]+/", $exclude);
+        // Split by newlines, commas, or multiple spaces
+        $lines = preg_split("/[\r\n,]+|[\s]{2,}/", $exclude);
+        // Remove empty values and trim
+        $lines = array_filter(array_map('trim', $lines));
 
         return array_map('trim', $lines, array_fill(0, count($lines), '/'));
     }

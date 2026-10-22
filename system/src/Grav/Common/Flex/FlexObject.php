@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -13,6 +13,7 @@ namespace Grav\Common\Flex;
 
 use Grav\Common\Flex\Traits\FlexGravTrait;
 use Grav\Common\Flex\Traits\FlexObjectTrait;
+use Grav\Common\Media\Interfaces\MediaInterface;
 use Grav\Framework\Flex\Traits\FlexMediaTrait;
 use function is_array;
 
@@ -21,7 +22,7 @@ use function is_array;
  *
  * @package Grav\Common\Flex
  */
-abstract class FlexObject extends \Grav\Framework\Flex\FlexObject
+abstract class FlexObject extends \Grav\Framework\Flex\FlexObject implements MediaInterface
 {
     use FlexGravTrait;
     use FlexObjectTrait;
@@ -42,7 +43,7 @@ abstract class FlexObject extends \Grav\Framework\Flex\FlexObject
 
         // Handle media fields.
         $settings = $this->getFieldSettings($name);
-        if ($settings['media_field'] ?? false === true) {
+        if (($settings['media_field'] ?? false) === true) {
             return $this->parseFileProperty($value, $settings);
         }
 

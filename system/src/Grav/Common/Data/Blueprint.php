@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Data
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -37,7 +37,7 @@ class Blueprint extends BlueprintForm
     /** @var string|null */
     protected $scope;
 
-    /** @var BlueprintSchema */
+    /** @var BlueprintSchema|null */
     protected $blueprintSchema;
 
     /** @var object|null */
@@ -54,7 +54,7 @@ class Blueprint extends BlueprintForm
      */
     public function __clone()
     {
-        if ($this->blueprintSchema) {
+        if (null !== $this->blueprintSchema) {
             $this->blueprintSchema = clone $this->blueprintSchema;
         }
     }
@@ -99,7 +99,7 @@ class Blueprint extends BlueprintForm
      */
     public function getDefaultValue(string $name)
     {
-        $path = explode('.', $name) ?: [];
+        $path = explode('.', $name);
         $current = $this->getDefaults();
 
         foreach ($path as $field) {
@@ -293,15 +293,16 @@ class Blueprint extends BlueprintForm
     /**
      * Flatten data by using blueprints.
      *
-     * @param  array $data
-     * @param  bool $includeAll
+     * @param array $data       Data to be flattened.
+     * @param bool $includeAll  True if undefined properties should also be included.
+     * @param string $name      Property which will be flattened, useful for flattening repeating data.
      * @return array
      */
-    public function flattenData(array $data, bool $includeAll = false)
+    public function flattenData(array $data, bool $includeAll = false, string $name = '')
     {
         $this->initInternals();
 
-        return $this->blueprintSchema->flattenData($data, $includeAll);
+        return $this->blueprintSchema->flattenData($data, $includeAll, $name);
     }
 
 
@@ -514,7 +515,7 @@ class Blueprint extends BlueprintForm
             $success = $this->resolveActions($user, $actions);
         }
         if (!$success) {
-            $this->addPropertyRecursive($field, 'validate', ['ignore' => true]);
+            static::addPropertyRecursive($field, 'validate', ['ignore' => true]);
         }
     }
 
@@ -524,8 +525,12 @@ class Blueprint extends BlueprintForm
      * @param string $op
      * @return bool
      */
-    protected function resolveActions(UserInterface $user, array $actions, string $op = 'and')
+    protected function resolveActions(?UserInterface $user, array $actions, string $op = 'and')
     {
+        if (null === $user) {
+            return false;
+        }
+
         $c = $i = count($actions);
         foreach ($actions as $key => $action) {
             if (!is_int($key) && is_array($actions)) {
@@ -561,7 +566,7 @@ class Blueprint extends BlueprintForm
         }
 
         if ($matches) {
-            $this->addPropertyRecursive($field, 'validate', ['ignore' => true]);
+            static::addPropertyRecursive($field, 'validate', ['ignore' => true]);
             return;
         }
     }
@@ -572,7 +577,7 @@ class Blueprint extends BlueprintForm
      * @param mixed $value
      * @return void
      */
-    protected function addPropertyRecursive(array &$field, $property, $value)
+    public static function addPropertyRecursive(array &$field, $property, $value)
     {
         if (is_array($value) && isset($field[$property]) && is_array($field[$property])) {
             $field[$property] = array_merge_recursive($field[$property], $value);
@@ -582,7 +587,7 @@ class Blueprint extends BlueprintForm
 
         if (!empty($field['fields'])) {
             foreach ($field['fields'] as $key => &$child) {
-                $this->addPropertyRecursive($child, $property, $value);
+                static::addPropertyRecursive($child, $property, $value);
             }
         }
     }

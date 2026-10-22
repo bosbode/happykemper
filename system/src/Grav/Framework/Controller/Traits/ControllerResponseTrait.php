@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Controller
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,12 +12,14 @@ declare(strict_types=1);
 namespace Grav\Framework\Controller\Traits;
 
 use Grav\Common\Config\Config;
+use Grav\Common\Data\ValidationException;
 use Grav\Common\Debugger;
 use Grav\Common\Grav;
 use Grav\Common\Utils;
 use Grav\Framework\Psr7\Response;
 use Grav\Framework\RequestHandler\Exception\RequestException;
 use Grav\Framework\Route\Route;
+use JsonSerializable;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\StreamInterface;
@@ -95,7 +97,7 @@ trait ControllerResponseTrait
         $headers = $headers ?? [];
         $options = $options ?? ['force_download' => true];
 
-        $file_parts = pathinfo($filename);
+        $file_parts = Utils::pathinfo($filename);
 
         if (!isset($headers['Content-Type'])) {
             $mimetype = Utils::getMimeByExtension($file_parts['extension']);
@@ -138,9 +140,9 @@ trait ControllerResponseTrait
             $code = (int)$this->getConfig()->get('system.pages.redirect_default_code', 302);
         }
 
+        $ext = Utils::pathinfo($url, PATHINFO_EXTENSION);
         $accept = $this->getAccept(['application/json', 'text/html']);
-
-        if ($accept === 'application/json') {
+        if ($ext === 'json' || $accept === 'application/json') {
             return $this->createJsonResponse(['code' => $code, 'status' => 'redirect', 'redirect' => $url]);
         }
 
@@ -173,6 +175,7 @@ trait ControllerResponseTrait
             if ($method !== 'GET' && $method !== 'HEAD') {
                 $this->setMessage($message, 'error');
                 $referer = $request->getHeaderLine('Referer');
+
                 return $this->createRedirectResponse($referer, 303);
             }
 
@@ -202,15 +205,23 @@ trait ControllerResponseTrait
     protected function getErrorJson(Throwable $e): array
     {
         $code = $this->getErrorCode($e instanceof RequestException ? $e->getHttpCode() : $e->getCode());
-        $message = $e->getMessage();
+        if ($e instanceof ValidationException) {
+            $message = $e->getMessage();
+        } else {
+            $message = htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+
+        $extra = $e instanceof JsonSerializable ? $e->jsonSerialize() : [];
+
         $response = [
             'code' => $code,
             'status' => 'error',
             'message' => $message,
+            'redirect' => null,
             'error' => [
                 'code' => $code,
                 'message' => $message
-            ]
+            ] + $extra
         ];
 
         /** @var Debugger $debugger */

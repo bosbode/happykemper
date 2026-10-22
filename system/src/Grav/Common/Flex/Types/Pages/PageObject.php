@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -25,9 +25,9 @@ use Grav\Common\Page\Pages;
 use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
 use Grav\Framework\Filesystem\Filesystem;
-use Grav\Framework\Flex\FlexObject;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
 use Grav\Framework\Flex\Pages\FlexPageObject;
+use Grav\Framework\Object\ObjectCollection;
 use Grav\Framework\Route\Route;
 use Grav\Framework\Route\RouteFactory;
 use Grav\Plugin\Admin\Admin;
@@ -93,23 +93,18 @@ class PageObject extends FlexPageObject
         }
     }
 
-    public function translated(): bool
-    {
-        return $this->translatedLanguages(true) ? true : false;
-    }
-
     /**
      * @param string|array $query
      * @return Route|null
      */
     public function getRoute($query = []): ?Route
     {
-        $route = $this->route();
-        if (null === $route) {
+        $path = $this->route();
+        if (null === $path) {
             return null;
         }
 
-        $route = RouteFactory::createFromString($route);
+        $route = RouteFactory::createFromString($path);
         if ($lang = $route->getLanguage()) {
             $grav = Grav::instance();
             if (!$grav['config']->get('system.languages.include_default_lang')) {
@@ -204,10 +199,7 @@ class PageObject extends FlexPageObject
             }
 
             // Make sure page isn't being moved under itself.
-            $key = $this->getKey();
-            if ($key === $parentKey || strpos($parentKey, $key . '/') === 0) {
-                throw new RuntimeException(sprintf('Page /%s cannot be moved to %s', $key, $parentRoute));
-            }
+            $key = $this->getStorageKey();
 
             /** @var PageObject|null $parent */
             $parent = $parentKey !== false ? $this->getFlexDirectory()->getObject($parentKey, 'storage_key') : null;
@@ -250,6 +242,7 @@ class PageObject extends FlexPageObject
     {
         /** @var PageCollection $siblings */
         $siblings = $variables['siblings'];
+        /** @var PageObject $sibling */
         foreach ($siblings as $sibling) {
             $sibling->save(false);
         }
@@ -266,8 +259,26 @@ class PageObject extends FlexPageObject
     }
 
     /**
+     * @param UserInterface|null $user
+     */
+    public function check(UserInterface $user = null): void
+    {
+        parent::check($user);
+
+        if ($user && $this->isMoved()) {
+            $parentKey = $this->getProperty('parent_key');
+
+            /** @var PageObject|null $parent */
+            $parent = $this->getFlexDirectory()->getObject($parentKey, 'storage_key');
+            if (!$parent || !$parent->isAuthorized('create', null, $user)) {
+                throw new \RuntimeException('Forbidden', 403);
+            }
+        }
+    }
+
+    /**
      * @param array|bool $reorder
-     * @return FlexObject|FlexObjectInterface
+     * @return static
      */
     public function save($reorder = true)
     {
@@ -296,9 +307,25 @@ class PageObject extends FlexPageObject
         }
 
         // Reset original after save events have all been called.
-        $this->_original = null;
+        $this->_originalObject = null;
 
         return $instance;
+    }
+
+    /**
+     * @return static
+     */
+    public function delete()
+    {
+        $result = parent::delete();
+
+        // Backwards compatibility with older plugins.
+        $fireEvents = $this->isAdminSite() && $this->getFlexDirectory()->getConfig('object.compat.events', true);
+        if ($fireEvents) {
+            $this->getContainer()->fireEvent('onAdminAfterDelete', new Event(['object' => $this]));
+        }
+
+        return $result;
     }
 
     /**
@@ -345,16 +372,27 @@ class PageObject extends FlexPageObject
     }
 
     /**
-     * @param array $ordering
-     * @return PageCollection|null
+     * @return bool
      */
-    protected function reorderSiblings(array $ordering)
+    protected function isMoved(): bool
     {
         $storageKey = $this->getMasterKey();
         $filesystem = Filesystem::getInstance(false);
         $oldParentKey = ltrim($filesystem->dirname("/{$storageKey}"), '/');
         $newParentKey = $this->getProperty('parent_key');
-        $isMoved = $oldParentKey !== $newParentKey;
+
+        return $this->exists() && $oldParentKey !== $newParentKey;
+    }
+
+    /**
+     * @param array $ordering
+     * @return PageCollection|null
+     * @phpstan-return ObjectCollection<string,PageObject>|null
+     */
+    protected function reorderSiblings(array $ordering)
+    {
+        $storageKey = $this->getMasterKey();
+        $isMoved = $this->isMoved();
         $order = !$isMoved ? $this->order() : false;
         if ($order !== false) {
             $order = (int)$order;
@@ -372,10 +410,12 @@ class PageObject extends FlexPageObject
         // Handle special case where ordering isn't given.
         if ($ordering === []) {
             if ($order >= 999999) {
-                // Set ordering to point to be the last item.
+                // Set ordering to point to be the last item, ignoring the object itself.
                 $order = 0;
                 foreach ($siblings as $sibling) {
-                    $order = max($order, (int)$sibling->order());
+                    if ($sibling->getKey() !== $this->getKey()) {
+                        $order = max($order, (int)$sibling->order());
+                    }
                 }
                 $this->order($order + 1);
             }
@@ -398,7 +438,8 @@ class PageObject extends FlexPageObject
 
         // Add missing siblings into the end of the list, keeping the previous ordering between them.
         foreach ($siblings as $sibling) {
-            $basename = preg_replace('|^\d+\.|', '', $sibling->getProperty('folder'));
+            $folder = (string)$sibling->getProperty('folder');
+            $basename = preg_replace('|^\d+\.|', '', $folder);
             if (!in_array($basename, $ordering, true)) {
                 $ordering[] = $basename;
             }
@@ -408,7 +449,8 @@ class PageObject extends FlexPageObject
         $ordering = array_flip(array_values($ordering));
         $count = count($ordering);
         foreach ($siblings as $sibling) {
-            $basename = preg_replace('|^\d+\.|', '', $sibling->getProperty('folder'));
+            $folder = (string)$sibling->getProperty('folder');
+            $basename = preg_replace('|^\d+\.|', '', $folder);
             $newOrder = $ordering[$basename] ?? null;
             $newOrder = null !== $newOrder ? $newOrder + 1 : (int)$sibling->order() + $count;
             $sibling->order($newOrder);
@@ -421,7 +463,9 @@ class PageObject extends FlexPageObject
         if ($isMoved && $this->order() !== false) {
             $parentKey = $this->getProperty('parent_key');
             if ($parentKey === '') {
-                $newParent = $this->getFlexDirectory()->getIndex()->getRoot();
+                /** @var PageIndex $index */
+                $index = $this->getFlexDirectory()->getIndex();
+                $newParent = $index->getRoot();
             } else {
                 $newParent = $this->getFlexDirectory()->getObject($parentKey, 'storage_key');
                 if (!$newParent instanceof PageInterface) {
@@ -487,6 +531,8 @@ class PageObject extends FlexPageObject
         if ($isNew === true && $name === '') {
             // Support onBlueprintCreated event just like in Pages::blueprints($template)
             $blueprint->set('initialized', true);
+            $blueprint->setFilename($template);
+
             Grav::instance()->fireEvent('onBlueprintCreated', new Event(['blueprint' => $blueprint, 'type' => $template]));
         }
 
@@ -540,38 +586,46 @@ class PageObject extends FlexPageObject
      */
     public function filterBy(array $filters, bool $recursive = false): bool
     {
+        $language = $filters['language'] ?? null;
+        if (null !== $language) {
+            /** @var PageObject $test */
+            $test = $this->getTranslation($language) ?? $this;
+        } else {
+            $test = $this;
+        }
+
         foreach ($filters as $key => $value) {
             switch ($key) {
                 case 'search':
-                    $matches = $this->search((string)$value) > 0.0;
+                    $matches = $test->search((string)$value) > 0.0;
                     break;
                 case 'page_type':
                     $types = $value ? explode(',', $value) : [];
-                    $matches = in_array($this->template(), $types, true);
+                    $matches = in_array($test->template(), $types, true);
                     break;
                 case 'extension':
-                    $matches = Utils::contains((string)$value, $this->extension());
+                    $matches = Utils::contains((string)$value, $test->extension());
                     break;
                 case 'routable':
-                    $matches = $this->isRoutable() === (bool)$value;
+                    $matches = $test->isRoutable() === (bool)$value;
                     break;
                 case 'published':
-                    $matches = $this->isPublished() === (bool)$value;
+                    $matches = $test->isPublished() === (bool)$value;
                     break;
                 case 'visible':
-                    $matches = $this->isVisible() === (bool)$value;
+                    $matches = $test->isVisible() === (bool)$value;
                     break;
                 case 'module':
-                    $matches = $this->isModule() === (bool)$value;
+                    $matches = $test->isModule() === (bool)$value;
                     break;
                 case 'page':
-                    $matches = $this->isPage() === (bool)$value;
+                    $matches = $test->isPage() === (bool)$value;
                     break;
                 case 'folder':
-                    $matches = $this->isPage() === !$value;
+                    $matches = $test->isPage() === !$value;
                     break;
                 case 'translated':
-                    $matches = $this->hasTranslation() === (bool)$value;
+                    $matches = $test->hasTranslation() === (bool)$value;
                     break;
                 default:
                     $matches = true;
@@ -580,7 +634,14 @@ class PageObject extends FlexPageObject
 
             // If current filter does not match, we still may have match as a parent.
             if ($matches === false) {
-                return $recursive && $this->children()->getIndex()->filterBy($filters, true)->count() > 0;
+                if (!$recursive) {
+                    return false;
+                }
+
+                /** @var PageIndex $index */
+                $index = $this->children()->getIndex();
+
+                return $index->filterBy($filters, true)->count() > 0;
             }
         }
 

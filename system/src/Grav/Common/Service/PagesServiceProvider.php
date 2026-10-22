@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Service
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -59,7 +59,7 @@ class PagesServiceProvider implements ServiceProviderInterface
             /** @var Uri $uri */
             $uri = $grav['uri'];
 
-            $path = $uri->path() ?: '/'; // Don't trim to support trailing slash default routes
+            $path = $uri->path() ? urldecode($uri->path()) : '/'; // Don't trim to support trailing slash default routes
             $page = $pages->dispatch($path);
 
             // Redirection tests
@@ -72,7 +72,7 @@ class PagesServiceProvider implements ServiceProviderInterface
                 if ($config->get('system.force_ssl')) {
                     $scheme = $uri->scheme(true);
                     if ($scheme !== 'https') {
-                        $url = 'https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+                        $url = 'https://' . $uri->host() . $uri->uri();
                         $grav->redirect($url);
                     }
                 }
@@ -99,7 +99,8 @@ class PagesServiceProvider implements ServiceProviderInterface
                     /** @var Language $language */
                     $language = $grav['language'];
 
-                    $redirectCode = (int)$config->get('system.pages.redirect_default_route', 0);
+                    $redirect_default_route = $page->header()->redirect_default_route ?? $config->get('system.pages.redirect_default_route', 0);
+                    $redirectCode = (int) $redirect_default_route;
 
                     // Language-specific redirection scenarios
                     if ($language->enabled() && ($language->isLanguageInUrl() xor $language->isIncludeDefaultLanguage())) {

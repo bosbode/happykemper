@@ -4,11 +4,11 @@ namespace Grav\Plugin;
 
 use Composer\Autoload\ClassLoader;
 use DateTime;
+use Doctrine\Common\Cache\Cache;
 use Exception;
+use Grav\Common\Data\Data;
 use Grav\Common\Data\ValidationException;
-use Grav\Common\Debugger;
 use Grav\Common\Filesystem\Folder;
-use Grav\Common\Grav;
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Page\Pages;
 use Grav\Common\Page\Types;
@@ -18,11 +18,13 @@ use Grav\Common\Utils;
 use Grav\Common\Uri;
 use Grav\Common\Yaml;
 use Grav\Framework\Form\Interfaces\FormInterface;
+use Grav\Framework\Psr7\Response;
 use Grav\Framework\Route\Route;
+use Grav\Plugin\Form\Captcha\BasicCaptcha;
+use Grav\Plugin\Form\Captcha\CaptchaManager;
 use Grav\Plugin\Form\Form;
 use Grav\Plugin\Form\Forms;
-use ReCaptcha\ReCaptcha;
-use ReCaptcha\RequestMethod\CurlPost;
+use Grav\Plugin\Form\TwigExtension;
 use RecursiveArrayIterator;
 use RecursiveIteratorIterator;
 use RocketTheme\Toolbox\File\JsonFile;
@@ -30,6 +32,7 @@ use RocketTheme\Toolbox\File\YamlFile;
 use RocketTheme\Toolbox\File\File;
 use RocketTheme\Toolbox\Event\Event;
 use RuntimeException;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Twig\Extension\CoreExtension;
 use Twig\TwigFunction;
 use function count;
@@ -51,23 +54,22 @@ class FormPlugin extends Plugin
 
     /** @var Form */
     protected $form;
-    /** @var array */
+    /** @var array[]|FormInterface[] */
     protected $forms = [];
-    /** @var array */
-    protected $flat_forms = [];
-    /** @var array */
+    /** @var string|null The cache id the forms were last saved under */
+    protected $forms_cache_id;
+    /** @var FormInterface[] */
     protected $active_forms = [];
     /** @var array */
     protected $json_response = [];
-    /** @var bool */
-    protected $recache_forms = false;
+
 
     /**
      * @return bool
      */
     public static function checkRequirements(): bool
     {
-        return version_compare(GRAV_VERSION, '1.6', '>');
+        return version_compare(GRAV_VERSION, '1.7', '>');
     }
 
     /**
@@ -80,22 +82,51 @@ class FormPlugin extends Plugin
         }
 
         return [
-            'onPluginsInitialized' => [
-                ['autoload', 100000],
-                ['onPluginsInitialized', 0]
-            ],
-            'onTwigTemplatePaths' => ['onTwigTemplatePaths', 0]
+            'onPluginsInitialized' => ['onPluginsInitialized', 0],
+            'onTwigExtensions' => ['onTwigExtensions', 0],
+            'onTwigTemplatePaths' => ['onTwigTemplatePaths', 0],
+            // Register the `form` page template unconditionally. This must NOT be
+            // gated behind isAdmin(): under Admin Next the admin context (the API
+            // plugin's AdminProxy) isn't established until route dispatch, long
+            // after onPluginsInitialized runs — so an isAdmin() check here would be
+            // false and the template would never appear in the page-type list.
+            // The handler is context-free (just registers a type), so it is safe
+            // to subscribe in every context; the event only fires from getTypes().
+            'onGetPageTemplates' => ['onGetPageTemplates', 0],
+            'onBuildTwigSandboxPolicy' => ['onBuildTwigSandboxPolicy', 0],
         ];
     }
 
     /**
-     * [onPluginsInitialized:100000] Composer autoload.
+     * Allow the Form object's safe, read-only value accessors under the Twig
+     * content sandbox.
      *
+     * Form `process.redirect` and `process.message` strings are rendered with
+     * the sandboxed Twig::processString(), and a form's front matter is
+     * editor-reachable (expert mode), so the sandbox must stay on. But a
+     * redirect like `?x={{ form.value.email }}` needs to read the submitted
+     * values, and `Form` is not a class the base sandbox allow-lists, so the
+     * expression was throwing and soft-failing to the raw string (#4207,
+     * regression from the content-sandbox hardening). We register only the
+     * value getters — the data the submitter already controls — not the whole
+     * object.
+     *
+     * @param Event $event
+     * @return void
+     */
+    public function onBuildTwigSandboxPolicy(Event $event): void
+    {
+        $methods = $event['methods'];
+        $methods[] = ['class' => Form::class, 'methods' => 'value, getValue, getValues, data'];
+        $event['methods'] = $methods;
+    }
+
+    /**
      * @return ClassLoader
      */
     public function autoload()
     {
-        return require __DIR__ . '/vendor/autoload.php';
+        return require __DIR__.'/vendor/autoload.php';
     }
 
     /**
@@ -110,27 +141,46 @@ class FormPlugin extends Plugin
 
         $this->grav['forms'] = function () {
             $forms = new Forms();
-
-            $grav = Grav::instance();
             $event = new Event(['forms' => $forms]);
-            $grav->fireEvent('onFormRegisterTypes', $event);
+
+            $this->grav->fireEvent('onFormRegisterTypes', $event);
 
             return $forms;
         };
 
+        // Initialize the captcha manager
+        CaptchaManager::initialize();
+
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+
+        // Refresh Nonce Logic - Run early to catch both frontend and admin
+        // Uri::param() returns false when missing, so use fallback even on falsey values.
+        $task = $uri->param('task') ?: $uri->query('task') ?: ($_REQUEST['task'] ?? null);
+        if ($task === 'get-nonce') {
+            $action = $uri->param('action') ?: $uri->query('action') ?: ($_REQUEST['action'] ?? 'form');
+            $nonce = Utils::getNonce($action);
+            $response = new Response(200, ['Content-Type' => 'application/json'], json_encode(['nonce' => $nonce]));
+
+            $this->grav->close($response);
+        }
+
         if ($this->isAdmin()) {
             $this->enable([
                 'onPageInitialized' => ['onPageInitialized', 0],
-                'onGetPageTemplates' => ['onGetPageTemplates', 0],
             ]);
             return;
         }
 
         // Mini Keep-Alive Logic
-        $task = $this->grav['uri']->param('task');
-        if ($task && $task === 'keep-alive') {
-            exit;
+        if ($task === 'keep-alive') {
+            $response = new Response(200);
+
+            $this->grav->close($response);
         }
+
+        $this->processBasicCaptchaImage($uri);
+        $this->processCapRoutes($uri);
 
         $this->enable([
             'onPageProcessed' => ['onPageProcessed', 0],
@@ -141,10 +191,12 @@ class FormPlugin extends Plugin
             'onTwigSiteVariables' => ['onTwigVariables', 0],
             'onFormValidationProcessed' => ['onFormValidationProcessed', 0],
         ]);
+
+
     }
 
     /**
-     * @param Event $event
+     * @param  Event  $event
      * @return void
      */
     public function onGetPageTemplates(Event $event): void
@@ -157,16 +209,16 @@ class FormPlugin extends Plugin
     /**
      * Process forms after page header processing, but before caching
      *
-     * @param Event $e
+     * @param  Event  $event
      * @return void
      */
-    public function onPageProcessed(Event $e): void
+    public function onPageProcessed(Event $event): void
     {
         /** @var PageInterface $page */
-        $page = $e['page'];
+        $page = $event['page'];
 
-        $pageForms = $page->forms();
-        if (!$pageForms) {
+        $forms = $page->getForms();
+        if (!$forms) {
             return;
         }
 
@@ -180,23 +232,18 @@ class FormPlugin extends Plugin
         }
         $parent = $current && $current !== $page ? $current : null;
 
-        $page_route = $page->home() ? '/' : $page->route();
-
         // If the form was in the modular page, we need to add the form into the parent page as well.
         if ($parent) {
-            $parent->addForms($pageForms);
-            $parent_route = $parent->home() ? '/' : $parent->route();
+            $parent->addForms($forms);
         }
 
-        /** @var Forms $forms */
-        $forms = $this->grav['forms'];
-
         // Store the page forms in the forms instance
-        foreach ($pageForms as $name => $form) {
-            if (isset($parent, $parent_route)) {
-                $this->addForm($parent_route, $forms->createPageForm($parent, $name, $form));
+        foreach ($forms as $name => $form) {
+            if ($parent) {
+                $this->addFormDefinition($parent, $name, $form);
             }
-            $this->addForm($page_route, $forms->createPageForm($page, $name, $form));
+
+            $this->addFormDefinition($page, $name, $form);
         }
     }
 
@@ -208,6 +255,13 @@ class FormPlugin extends Plugin
     public function onPagesInitialized(): void
     {
         $this->loadCachedForms();
+
+        // A pages rebuild fires onPageProcessed, and so saves the forms, before it sets its final cache
+        // id. Save them again under that id, or the next request misses them and forms from other pages,
+        // such as a signup form included in the footer, are unknown until the cache is cleared again.
+        if ($this->forms && $this->forms_cache_id !== null && $this->forms_cache_id !== $this->getFormCacheId()) {
+            $this->saveCachedForms();
+        }
     }
 
     /**
@@ -220,17 +274,11 @@ class FormPlugin extends Plugin
         $submitted = false;
         $this->json_response = [];
 
-        // Save cached forms.
-        if ($this->recache_forms) {
-            $this->saveCachedForms();
-        }
-
         /** @var PageInterface $page */
         $page = $this->grav['page'];
 
-        // Force rebuild form when form has not been built and form cache expired.
-        // This happens when form cache expires before the page cache
-        // and then does not trigger 'onPageProcessed' event.
+
+        // DEPRECATED: This should no longer ever happen
         if (!$this->forms) {
             $this->onPageProcessed(new Event(['page' => $page]));
         }
@@ -253,7 +301,7 @@ class FormPlugin extends Plugin
             if ($form instanceof Form) {
                 // Post the form
                 $isJson = $uri->extension() === 'json';
-                $task = $uri->post('task') ?? $uri->param('task');
+                $task = (string) ($uri->post('task') ?? $uri->param('task'));
 
                 if ($isJson) {
                     if ($task === 'store-state') {
@@ -282,10 +330,13 @@ class FormPlugin extends Plugin
                 if ($this->json_response && $page->template() !== 'form') {
                     $status = $this->json_response['status'] ?? null;
 
-                    header('Content-Type: application/json');
-                    http_response_code($status === 'error' ? 400 : 200);
-                    echo json_encode($this->json_response);
-                    exit;
+                    $response = new Response(
+                        $status !== 'error' ? 200 : 400,
+                        ['Content-Type' => 'application/json'],
+                        json_encode($this->json_response, JSON_THROW_ON_ERROR)
+                    );
+
+                    $this->grav->close($response);
                 }
             }
 
@@ -309,23 +360,37 @@ class FormPlugin extends Plugin
             // There is no active form to be posted.
             // Check all the forms for the current page; we are looking for forms with remember state turned on with random unique id.
 
+            /** @var Forms $forms */
+            $forms = $this->grav['forms'];
+
+            $lang = $this->grav['language']->getLanguage();
+
             /** @var Route $route */
             $route = $this->grav['route'];
-            $pageForms = $this->forms[$route->getRoute()] ?? [];
+            $pageForms = $this->forms[$lang][$route->getRoute()] ?? [];
 
-            foreach ($pageForms as $formName => $form) {
+            /**
+             * @var string $name
+             * @var array|FormInterface $form
+             */
+            foreach ($pageForms as $name => $form) {
+                if (is_array($form)) {
+                    $form = $this->createForm($page, $name, $form);
+                }
+                if (!$form instanceof FormInterface) {
+                    continue;
+                }
+
                 if ($form->get('remember_redirect')) {
                     // Found one; we need to check if unique id is set.
                     $formParam = $form->get('uniqueid_param', 'fid');
                     $uniqueId = $route->getGravParam($formParam);
 
-                    if ($uniqueId && preg_match('/[a-z\d]+/', $uniqueId)) {
+                    if ($uniqueId && preg_match('/[a-z\d]+/', (string) $uniqueId)) {
                         // URL contains unique id, initialize the current form.
                         $form->setUniqueId($uniqueId);
                         $form->initialize();
 
-                        /** @var Forms $forms */
-                        $forms = $this->grav['forms'];
                         $forms->setActiveForm($form);
 
                         break;
@@ -333,7 +398,7 @@ class FormPlugin extends Plugin
 
                     // Append unique id to the URL and redirect.
                     $route = $route->withGravParam($formParam, $form->getUniqueId());
-                    $page->redirect((string)$route->toString());
+                    $page->redirect($route->toString());
 
                     // TODO: Do we want to add support for multiple forms with remembered state?
                     break;
@@ -353,11 +418,51 @@ class FormPlugin extends Plugin
             new TwigFunction('forms', [$this, 'getForm'])
         );
 
-        $this->grav['twig']->twig()->getExtension(CoreExtension::class)->setEscaper('yaml', function ($twig, $string, $charset) {
-            return Yaml::dump($string);
+        // Register yaml escaper for Twig
+        $twig = $this->grav['twig'];
+        if (method_exists($twig, 'setEscaper')) {
+            // Grav 1.8.0-beta.29+ has setEscaper() helper
+            $twig->setEscaper('yaml', function ($twig, $string, $charset) {
+                return Yaml::dump($string);
+            });
+        } elseif (class_exists('Twig\Runtime\EscaperRuntime')) {
+            // Grav 1.8.0-beta.1 to .28 with Twig 3.x (no helper yet)
+            $twig->twig()->getRuntime('Twig\Runtime\EscaperRuntime')->setEscaper(
+                'yaml',
+                function ($string, $charset) {
+                    return Yaml::dump($string);
+                }
+            );
+        } else {
+            // Grav 1.7 with Twig 1.x
+            $twig->twig()->getExtension(CoreExtension::class)->setEscaper(
+                'yaml',
+                function ($twig, $string, $charset) {
+                    return Yaml::dump($string);
+                }
+            );
         }
-        );
 
+    }
+
+    /**
+     * @return void
+     */
+    public function onTwigExtensions(): void
+    {
+        $twig = $this->grav['twig']->twig;
+        $twig->addExtension(new TwigExtension());
+        $twig->addFunction(new TwigFunction('captcha_template_exists', function ($template) use ($twig) {
+            return $twig->getLoader()->exists($template);
+        }));
+
+        // Add function to store basic captcha configuration in session
+        $twig->addFunction(new TwigFunction('store_basic_captcha_config', function ($fieldId, $config) {
+            $session = $this->grav['session'];
+            $sessionKey = "basic_captcha_config_{$fieldId}";
+            $session->{$sessionKey} = $config;
+            return true;
+        }));
     }
 
     /**
@@ -367,16 +472,16 @@ class FormPlugin extends Plugin
      */
     public function onTwigTemplatePaths(): void
     {
-        $this->grav['twig']->twig_paths[] = __DIR__ . '/templates';
+        $this->grav['twig']->twig_paths[] = __DIR__.'/templates';
     }
 
     /**
      * Make form accessible from twig.
      *
-     * @param Event $event
+     * @param  Event|null  $event
      * @return void
      */
-    public function onTwigVariables(Event $event = null): void
+    public function onTwigVariables(?Event $event = null): void
     {
         if ($event && isset($event['page'])) {
             $page = $event['page'];
@@ -393,6 +498,18 @@ class FormPlugin extends Plugin
         if ($this->config->get('plugins.form.built_in_css')) {
             $this->grav['assets']->addCss('plugin://form/assets/form-styles.css');
         }
+        if ($this->config->get('plugins.form.refresh_nonce')) {
+            $timeout = (int)$this->config->get('system.session.timeout', 1800);
+            // Nonce lifetime is ~12h (current + previous tick); cap refresh window to that.
+            $effectiveTimeout = min($timeout, 43200);
+            // Refresh close to expiry: 10% lead time, capped between 5s and 60s.
+            $leadTime = min(60, max(5, (int)round($effectiveTimeout * 0.10)));
+            $intervalSeconds = max(1, $effectiveTimeout - $leadTime);
+            $interval = $intervalSeconds * 1000;
+
+            $this->grav['assets']->addInlineJs("window.GravForm = window.GravForm || {}; window.GravForm.refresh_nonce_interval = $interval;", ['group' => 'bottom', 'position' => 'before']);
+            $this->grav['assets']->addJs('plugin://form/assets/form-nonce-refresh.js', ['group' => 'bottom', 'defer' => true]);
+        }
         $twig->twig_vars['form_max_filesize'] = Form::getMaxFilesize();
         $twig->twig_vars['form_json_response'] = $this->json_response;
     }
@@ -400,9 +517,10 @@ class FormPlugin extends Plugin
     /**
      * Handle form processing instructions.
      *
-     * @param Event $event
+     * @param  Event  $event
      * @return void
      * @throws Exception
+     * @throws TransportExceptionInterface
      */
     public function onFormProcessed(Event $event): void
     {
@@ -414,72 +532,26 @@ class FormPlugin extends Plugin
         $this->process($form);
 
         switch ($action) {
+            case 'basic-captcha':
+            case 'turnstile':
+            case 'cap':
             case 'captcha':
+                // Convert boolean params to array if needed
+                $captcha_params = is_array($params) ? $params : [];
 
-                $captcha_config = $this->config->get('plugins.form.recaptcha');
-
-                $secret = $params['recaptcha_secret'] ?? $params['recatpcha_secret'] ?? $captcha_config['secret_key'];
-
-                /** @var Uri $uri */
-                $uri = $this->grav['uri'];
-                $action = $form->value('action');
-                $hostname = $uri->host();
-                $ip = Uri::ip();
-
-                $recaptcha = new ReCaptcha($secret);
-                if (extension_loaded('curl')) {
-                    $recaptcha = new ReCaptcha($secret, new CurlPost());
-                }
-
-                // get captcha version
-                $captcha_version = $captcha_config['version'] ?? 2;
-
-                // Add version 3 specific options
-                if ($captcha_version == 3) {
-                    $token = $form->value('token');
-                    $resp = $recaptcha
-                        ->setExpectedHostname($hostname)
-                        ->setExpectedAction($action)
-                        ->setScoreThreshold(0.5)
-                        ->verify($token, $ip);
-                } else {
-                    $token = $form->value('g-recaptcha-response', true);
-                    $resp = $recaptcha
-                        ->setExpectedHostname($hostname)
-                        ->verify($token, $ip);
-                }
-
-                if (!$resp->isSuccess()) {
-                    $errors = $resp->getErrorCodes();
-                    $message = $this->grav['language']->translate('PLUGIN_FORM.ERROR_VALIDATING_CAPTCHA');
-
-                    $fields = $form->value()->blueprints()->get('form/fields');
-                    foreach ($fields as $field) {
-                        $type = $field['type'] ?? 'text';
-                        $field_message = $field['recaptcha_not_validated'] ?? null;
-                        if ($type === 'captcha' && $field_message) {
-                            $message = $field_message;
-                            break;
-                        }
-                    }
-
-                    $this->grav->fireEvent('onFormValidationError', new Event([
-                        'form' => $form,
-                        'message' => $message
-                    ]));
-
-                    $this->grav['log']->addWarning('Form reCAPTCHA Errors: [' . $uri->route() . '] ' . json_encode($errors));
-
+                // Use the captcha manager to validate
+                $validated = CaptchaManager::validateCaptcha($form, $captcha_params);
+                if (!$validated) {
                     $event->stopPropagation();
-
-                    return;
                 }
                 break;
+
             case 'timestamp':
                 $label = $params['label'] ?? 'Timestamp';
                 $format = $params['format'] ?? 'Y-m-d H:i:s';
-                $blueprint = $form->value()->blueprints();
-                $blueprint->set('form/fields/timestamp', ['name' => 'timestamp', 'label' => $label, 'type' => 'hidden']);
+                $blueprint = $form->getBlueprint();
+                $blueprint->set('form/fields/timestamp',
+                    ['name' => 'timestamp', 'label' => $label, 'type' => 'hidden']);
                 $now = new DateTime('now');
                 $date_string = $now->format($format);
                 $form->setFields($blueprint->fields());
@@ -487,7 +559,7 @@ class FormPlugin extends Plugin
                 break;
             case 'ip':
                 $label = $params['label'] ?? 'User IP';
-                $blueprint = $form->value()->blueprints();
+                $blueprint = $form->getBlueprint();
                 $blueprint->set('form/fields/ip', ['name' => 'ip', 'label' => $label, 'type' => 'hidden']);
                 $form->setFields($blueprint->fields());
                 $form->setData('ip', Uri::ip());
@@ -506,21 +578,29 @@ class FormPlugin extends Plugin
                 break;
             case 'redirect':
                 $this->grav['session']->setFlashObject('form', $form);
-                $url = ((string)$params);
+                $template = ((string) $params);
                 $vars = array(
                     'form' => $form
                 );
                 /** @var Twig $twig */
                 $twig = $this->grav['twig'];
-                $url = $twig->processString($url, $vars);
+                $url = $twig->processString($template, $vars);
+
+                // The redirect target is authored by the site, but the values it interpolates are
+                // submitted by the visitor. Only honor an off-site jump where the site asked for one:
+                // the authored template was already external, or the rendered URL still points here.
+                // Anything else means the off-site part arrived in form data.
+                if (Uri::isExternal($url) && !Uri::isExternal($template) && !$this->isSameHost($url)) {
+                    $this->grav['log']->warning(sprintf('plugin.form: blocked off-site redirect to "%s" coming from form data (redirect: "%s")', $url, $template));
+                    $url = $this->getCurrentPageRoute();
+                }
 
                 $message = $form->message;
                 if ($message) {
                     $this->grav['messages']->add($form->message, 'success');
                 }
 
-                $event['redirect'] = $url;
-                $event->stopPropagation();
+                $this->grav->redirect($url);
                 break;
             case 'reset':
                 if (Utils::isPositive($params)) {
@@ -530,11 +610,11 @@ class FormPlugin extends Plugin
                 }
                 break;
             case 'display':
-                $route = (string)$params;
+                $route = (string) $params;
                 if (!$route || $route[0] !== '/') {
                     /** @var Uri $uri */
                     $uri = $this->grav['uri'];
-                    $route = rtrim($uri->route(), '/') . '/' . ($route ?: '');
+                    $route = rtrim((string) $uri->route(), '/').'/'.($route ?: '');
                 }
 
                 /** @var Twig $twig */
@@ -554,8 +634,8 @@ class FormPlugin extends Plugin
                 break;
             case 'remember':
                 foreach ($params as $remember_field) {
-                    $field_cookie = 'forms-' . $form['name'] . '-' . $remember_field;
-                    setcookie($field_cookie, $form->value($remember_field), time() + 60 * 60 * 24 * 60);
+                    $field_cookie = 'forms-'.$form['name'].'-'.$remember_field;
+                    setcookie($field_cookie, (string) $form->value($remember_field), time() + 60 * 60 * 24 * 60);
                 }
                 break;
             case 'upload':
@@ -566,19 +646,29 @@ class FormPlugin extends Plugin
             case 'save':
                 $prefix = $params['fileprefix'] ?? '';
                 $format = $params['dateformat'] ?? 'Ymd-His-u';
-                $raw_format = (bool)($params['dateraw'] ?? false);
+                $raw_format = (bool) ($params['dateraw'] ?? false);
                 $postfix = $params['filepostfix'] ?? '';
-                $ext = !empty($params['extension']) ? '.' . trim($params['extension'], '.') : '.txt';
+                $ext = !empty($params['extension']) ? '.'.trim((string) $params['extension'], '.') : '.txt';
                 $filename = $params['filename'] ?? '';
                 $folder = !empty($params['folder']) ? $params['folder'] : $form->getName();
                 $operation = $params['operation'] ?? 'create';
+
+                // Reject path traversal in the folder parameter (folder is never run through checkFilename).
+                if (str_contains($folder, '..') || str_contains($folder, "\0")) {
+                    throw new RuntimeException(sprintf('Form save: Invalid folder path: %s', $folder));
+                }
 
                 if (!$filename) {
                     if ($operation === 'add') {
                         throw new RuntimeException('Form save: \'operation: add\' is only supported with a static filename');
                     }
 
-                    $filename = $prefix . $this->udate($format, $raw_format) . $postfix . $ext;
+                    $filename = $prefix.$this->udate($format, $raw_format).$postfix.$ext;
+                }
+
+                // Handle bad filenames.
+                if (!Utils::checkFilename($filename)) {
+                    throw new RuntimeException(sprintf('Form save: File with extension not allowed: %s', $filename));
                 }
 
                 /** @var Twig $twig */
@@ -590,10 +680,33 @@ class FormPlugin extends Plugin
                 // Process with Twig
                 $filename = $twig->processString($filename, $vars);
 
+                // Re-validate the rendered filename: checkFilename() above ran on the raw template, but Twig may
+                // expand submitted form values into traversal sequences or dangerous extensions.
+                if (!Utils::checkFilename($filename)) {
+                    throw new RuntimeException(sprintf('Form save: Invalid rendered filename: %s', $filename));
+                }
+
                 $locator = $this->grav['locator'];
                 $path = $locator->findResource('user-data://', true);
-                $dir = $path . DS . $folder;
-                $fullFileName = $dir . DS . $filename;
+                $dir = $path.DS.$folder;
+                $fullFileName = $dir.DS.$filename;
+
+                // Final containment check: the resolved target must stay within user-data://. The target dir may
+                // not exist yet on first save, so resolve the nearest existing ancestor instead of $dir itself.
+                // Separators are normalized to '/' throughout: the locator emits '/'-style paths while DS and
+                // realpath() use '\' on Windows, so $dir is mixed-separator. realpath() on a mixed-separator path
+                // is unreliable on Windows, and a mismatched separator would break the prefix compare (#637).
+                $normalize = static fn($p) => is_string($p) ? str_replace('\\', '/', $p) : $p;
+                $dataRoot = $normalize(realpath($path));
+                $ancestor = $normalize($dir);
+                while ($ancestor && !file_exists($ancestor) && dirname($ancestor) !== $ancestor) {
+                    $ancestor = dirname($ancestor);
+                }
+                $realAncestor = $ancestor ? $normalize(realpath($ancestor)) : false;
+                if ($dataRoot === false || $realAncestor === false
+                    || ($realAncestor !== $dataRoot && !str_starts_with($realAncestor, $dataRoot.'/'))) {
+                    throw new RuntimeException('Form save: Resolved path escapes the data directory.');
+                }
 
                 if (!empty($params['raw']) || !empty($params['template'])) {
                     // Save data as it comes from the form.
@@ -631,7 +744,7 @@ class FormPlugin extends Plugin
                 $form->copyFiles();
 
                 if ($operation === 'create') {
-                    $body = $twig->processString($params['body'] ?? '{% include "forms/data.txt.twig" %}', $vars);
+                    $body = $twig->processString($params['body'] ?? '{% include "forms/data.save.txt.twig" %}', $vars);
                     $file->save($body);
                 } elseif ($operation === 'add') {
                     if (!empty($params['body'])) {
@@ -648,7 +761,7 @@ class FormPlugin extends Plugin
                         file_put_contents($fullFileName, $body, FILE_APPEND | LOCK_EX);
                     } else {
                         // serialize YAML out to file for easier parsing as data sets
-                        $vars = $vars['form']->value()->toArray();
+                        $vars = $vars['form']->value();
 
                         foreach ($form->fields as $field) {
                             if (!empty($field['process']['ignore'])) {
@@ -689,7 +802,7 @@ class FormPlugin extends Plugin
     /**
      * Custom field logic can go in here
      *
-     * @param Event $event
+     * @param  Event  $event
      * @return void
      */
     public function onFormValidationProcessed(Event $event): void
@@ -705,12 +818,13 @@ class FormPlugin extends Plugin
     /**
      * Handle form validation error
      *
-     * @param Event $event An event object
+     * @param  Event  $event  An event object
      * @return void
      * @throws Exception
      */
     public function onFormValidationError(Event $event): void
     {
+        /** @var FormInterface $form */
         $form = $event['form'];
         if (isset($event['message'])) {
             $form->status = 'error';
@@ -718,6 +832,16 @@ class FormPlugin extends Plugin
             $form->messages = $event['messages'];
         }
 
+        // Refresh prevention records the form's unique id before validation runs (see shouldProcessForm).
+        // A failed submission must not consume that id, otherwise the user can't correct the mistake
+        // (e.g. a mistyped captcha) and resubmit the same form. Release it here so the corrected
+        // resubmission is allowed; a successful submission keeps the id recorded and still blocks refreshes.
+        $uniqueId = $form->getUniqueId();
+        if ($uniqueId && ($this->grav['session']->unique_form_id ?? null) === $uniqueId) {
+            $this->grav['session']->unique_form_id = null;
+        }
+
+        /** @var Uri $uri */
         $uri = $this->grav['uri'];
         $route = $uri->route();
 
@@ -727,8 +851,7 @@ class FormPlugin extends Plugin
 
         /** @var Pages $pages */
         $pages = $this->grav['pages'];
-        $page = $pages->dispatch($route, true);
-
+        $page = $pages->find($route, true);
         if ($page) {
             unset($this->grav['page']);
             $this->grav['page'] = $page;
@@ -738,70 +861,185 @@ class FormPlugin extends Plugin
     }
 
     /**
-     * Add a form to the forms plugin
+     * Add a form definition to the forms plugin
      *
-     * @param string|null $page_route
-     * @param FormInterface|null $form
+     * @param  PageInterface  $page
      * @return void
      */
-    public function addForm(?string $page_route, ?FormInterface $form)
+    public function addFormDefinition(PageInterface $page, string $name, array $form): void
+    {
+        $route = ($page->home() ? '/' : $page->route()) ?? '/';
+        $lang = $this->grav['language']->getLanguage();
+
+        if (!isset($this->forms[$lang][$route][$name])) {
+            $form['_page_routable'] = !$page->isModule();
+            $this->forms[$lang][$route][$name] = $form;
+            $this->saveCachedForms();
+        }
+    }
+
+    /**
+     * Add a form to the forms plugin
+     *
+     * @param  string|null  $route
+     * @param  FormInterface|null  $form
+     * @return void
+     */
+    public function addForm(?string $route, ?FormInterface $form): void
     {
         if (null === $form) {
             return;
         }
 
+        $lang = $this->grav['language']->getLanguage();
         $name = $form->getName();
 
-        if (!isset($this->forms[$page_route][$name])) {
-            $this->forms[$page_route][$name] = $form;
+        if (!isset($this->forms[$lang][$route][$name])) {
+            $form['_page_routable'] = true;
 
-            $this->flattenForms();
-            $this->recache_forms = true;
+            $this->forms[$lang][$route][$name] = $form;
+            $this->saveCachedForms();
         }
     }
 
     /**
      * function to get a specific form
      *
-     * @param null|array|string $data optional form `name`
+     * @param  string|array|null  $data  Optional form name or ['name' => $name, 'route' => $route]
      * @return FormInterface|null
      */
-    public function getForm($data = null)
+    public function getForm($data = null): ?FormInterface
     {
+        /** @var Pages $pages */
+        $pages = $this->grav['pages'];
+        $lang = $this->grav['language']->getLanguage();
+
+        // Handle parameters.
         if (is_array($data)) {
-            $form_name = $data['name'] ?? null;
-            $page_route = $data['route'] ?? null;
+            $name = (string) ($data['name'] ?? '');
+            $route = (string) ($data['route'] ?? '');
         } elseif (is_string($data)) {
-            $form_name = $data;
-            $page_route = null;
+            $name = $data;
+            $route = '';
         } else {
-            $form_name = null;
-            $page_route = null;
+            $name = '';
+            $route = '';
         }
 
-        // if no form name, use the first form found in the page
-        if (!$form_name) {
-            // If page route not provided, use the current page
-            if (!$page_route) {
-                // Get page route with a fallback using current URI if page not initialized yet
-                $page_route = $this->grav['page']->route() ?: $this->getCurrentPageRoute();
-            }
-
-            if (!empty($this->forms[$page_route])) {
-                $forms = $this->forms[$page_route];
-                $first_form = reset($forms) ?: null;
-                return $first_form;
-            }
-
-            // Try to get page by defined route first or get current if not found
-            $page = $this->grav['pages']->find($page_route) ?: $this->grav['page'];
-
-            // Try looking up in the defined page
-            return $this->grav['forms']->createPageForm($page);
+        // Return always the same form instance.
+        $form = $this->active_forms[$route][$name] ?? null;
+        if ($form) {
+            return $form;
         }
 
-        // return the form you are looking for if available
-        return $this->getFormByName($form_name);
+        $unnamed = $name === '';
+        $routed = $route !== '';
+
+        // Get the page.
+        if ($routed) {
+            // Use fixed route for the form.
+            $route_provided = true;
+
+            $page = $pages->find($route, true);
+        } else {
+            // Search form from the current page first.
+            $route_provided = false;
+
+            /** @var PageInterface|null $page */
+            $page = $this->grav['page'] ?? null;
+            if ($page) {
+                $route = $page->route();
+            } else {
+                // Get page route with a fallback using current URI if page is not yet initialized.
+                $route = $this->getCurrentPageRoute();
+                $page = $pages->find($route);
+            }
+        }
+
+        // Attempt to find the form from the page.
+        if ('' !== $route) {
+            $forms = $this->forms[$lang][$route] ?? [];
+
+            if (!$unnamed) {
+                // Get form by the name.
+                $form = $forms[$name] ?? null;
+            } else {
+                // Get the first form.
+                $form = reset($forms) ?: null;
+                $name = key($forms);
+            }
+        }
+
+        // Search the form from the other pages.
+        if (null === $form) {
+            // First check if we requested a specific form which didn't exist.
+            if ($route_provided || $unnamed) {
+                $this->grav['debugger']->addMessage(sprintf('Form %s not found in page %s', $name ?? 'unnamed', $route),
+                    'warning');
+
+                return null;
+            }
+
+            // Attempt to find any form with given name.
+            $forms = $this->findFormByName($name);
+            $first = reset($forms);
+            if (!$first) {
+                return null;
+            }
+
+            // Check for naming conflicts.
+            if (count($forms) > 1) {
+                $this->grav['debugger']->addMessage(sprintf('Fetching form by its name, but there are multiple pages with the same form name %s',
+                    $name), 'warning');
+            }
+
+            [$route, $name, $form] = $first;
+
+            $page = $pages->find($route);
+
+            // The form lives on a different page than the one being requested.
+            // Page access rules are only ever evaluated against the requested
+            // page, so without this check an anonymous visitor could POST to any
+            // public route with `__form-name__` set to a form that lives behind a
+            // login wall and run its process actions (GHSA-33m4-m988-5fvh).
+            if (null === $page || !$this->isPageAccessible($page)) {
+                $this->grav['debugger']->addMessage(sprintf(
+                    'Form %s was found on page %s, but that page is not accessible to the current user',
+                    $name, $route
+                ), 'warning');
+
+                return null;
+            }
+        }
+
+        // Form can be saved as an array or an object. If it's an array, we need to create object from it.
+        if (is_array($form)) {
+            // Form was cached as an array, try to create the object.
+            if (null === $page) {
+                $this->grav['debugger']->addMessage(sprintf('Form %s cannot be created as page %s does not exist',
+                    $name, $route), 'warning');
+
+                return null;
+            }
+
+            $form = $this->createForm($page, $name, $form);
+        }
+
+        // Register form to the active forms to get the same instance back next time.
+        $this->active_forms[$route][$name] = $form;
+        if ($unnamed) {
+            $this->active_forms[$route][''] = $form;
+        }
+
+        // Also make aliases if route was not provided to the method.
+        if (!$routed) {
+            $this->active_forms[''][$name] = $form;
+            if ($unnamed) {
+                $this->active_forms[''][''] = $form;
+            }
+        }
+
+        return $form;
     }
 
     /**
@@ -809,7 +1047,7 @@ class FormPlugin extends Plugin
      *
      * @return array
      */
-    public function getFormFieldTypes()
+    public function getFormFieldTypes(): array
     {
         return [
             'avatar' => [
@@ -881,7 +1119,7 @@ class FormPlugin extends Plugin
      *
      * - fillWithCurrentDateTime
      *
-     * @param Form $form
+     * @param  FormInterface  $form
      * @return void
      */
     protected function process($form)
@@ -896,40 +1134,97 @@ class FormPlugin extends Plugin
     /**
      * Get current page's route
      *
-     * @return mixed
+     * @return string
      */
     protected function getCurrentPageRoute()
     {
         $path = $this->grav['uri']->route();
-        $path = $path ?: '/';
-        return $path;
+
+        return $path ?: '/';
     }
 
     /**
-     * Retrieve a form based on the form name
+     * Check if a URL points back at this site.
      *
-     * @param string $form_name
-     * @return mixed
+     * Both the requested host and the host of the configured base URL count as our own, as the
+     * two differ when `system.custom_base_url` is set or the site runs behind a reverse proxy.
+     *
+     * @param  string $url
+     * @return bool
      */
-    protected function getFormByName($form_name)
+    protected function isSameHost(string $url): bool
     {
-        $form = $this->active_forms[$form_name] ?? null;
-        if (!$form) {
-            $form = $this->flat_forms[$form_name] ?? null;
-
-            if (!$form) {
-                return null;
-            }
-
-            // Reset form to change the cached unique id and to fire onFormInitialized event.
-            $form->setUniqueId('');
-            $form->reset();
-
-            // Register form to the active forms to get the same instance back next time.
-            $this->active_forms[$form_name] = $form;
+        $host = parse_url($url, PHP_URL_HOST);
+        if (!is_string($host) || $host === '') {
+            return false;
         }
 
-        return $form;
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+
+        $own_hosts = [$uri->host(), parse_url((string) $uri->rootUrl(true), PHP_URL_HOST)];
+
+        foreach ($own_hosts as $own_host) {
+            if (is_string($own_host) && $own_host !== '' && strcasecmp($host, $own_host) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Return all forms matching the given name.
+     *
+     * @param  string  $name
+     * @return array
+     */
+    /**
+     * Can the current user reach the page that owns a form?
+     *
+     * Access rules belong to the Login plugin, so ask it rather than re-reading
+     * the `access:` header here: rules can be inherited from a parent when
+     * `parent_acl` is enabled, a session that has not completed its 2FA challenge
+     * must still be denied, and other plugins can veto through the same event.
+     * With no Login plugin installed there are no page access rules on the site
+     * at all, so there is nothing to enforce. (GHSA-33m4-m988-5fvh)
+     *
+     * @param  PageInterface  $page
+     * @return bool
+     */
+    protected function isPageAccessible(PageInterface $page): bool
+    {
+        if (!$page->published()) {
+            return false;
+        }
+
+        $login = $this->grav['login'] ?? null;
+        if (null === $login || !method_exists($login, 'isUserAuthorizedForPage')) {
+            return true;
+        }
+
+        return $login->isUserAuthorizedForPage(
+            $this->grav['user'],
+            $page,
+            new Data((array) $this->grav['config']->get('plugins.login'))
+        );
+    }
+
+    protected function findFormByName(string $name): array
+    {
+        $list = [];
+        $lang = $this->grav['language']->getLanguage();
+        $lang_forms = $this->forms[$lang] ?? [];
+
+        foreach ($lang_forms as $route => $forms) {
+            foreach ($forms as $key => $form) {
+                if ($name === $key && !empty($form['_page_routable'])) {
+                    $list[] = [$route, $key, $form];
+                }
+            }
+        }
+
+        return $list;
     }
 
     /**
@@ -937,17 +1232,20 @@ class FormPlugin extends Plugin
      *
      * @return bool
      */
-    protected function shouldProcessForm()
+    protected function shouldProcessForm(): bool
     {
+        /** @var Uri $uri */
         $uri = $this->grav['uri'];
-        $nonce = $uri->post('form-nonce');
-        $status = $nonce ? true : false; // php72 quirk?
-        $refresh_prevention = null;
+        $status = (bool) $uri->post('form-nonce');
 
         if ($status && $form = $this->form()) {
             // Make sure form is something we recognize.
             if (!$form instanceof Form) {
                 return false;
+            }
+
+            if (isset($form->xhr_submit) && $form->xhr_submit && $this->isFormXhrRequest()) {
+                $form->set('template', $form->template ?? 'form-xhr');
             }
 
             // Set page template if passed by form
@@ -956,7 +1254,7 @@ class FormPlugin extends Plugin
             }
 
             if (isset($form->refresh_prevention)) {
-                $refresh_prevention = (bool)$form->refresh_prevention;
+                $refresh_prevention = (bool) $form->refresh_prevention;
             } else {
                 $refresh_prevention = $this->config->get('plugins.form.refresh_prevention', false);
             }
@@ -982,28 +1280,13 @@ class FormPlugin extends Plugin
     }
 
     /**
-     * Flatten the forms array into something that can be more easily searched
-     *
-     * @return void
-     */
-    protected function flattenForms()
-    {
-        $this->flat_forms = Utils::arrayFlatten($this->forms);
-    }
-
-    /**
      * Get the current form, should already be processed but can get it directly from the page if necessary
      *
-     * @param PageInterface|null $page
-     * @return Form|null
+     * @param  PageInterface|null  $page
+     * @return FormInterface|null
      */
-    protected function form(PageInterface $page = null)
+    protected function form(?PageInterface $page = null)
     {
-        // Regenerate list of flat_forms if not already populated
-        if (empty($this->flat_forms)) {
-            $this->flattenForms();
-        }
-
         /** @var Forms $forms */
         $forms = $this->grav['forms'];
 
@@ -1015,18 +1298,23 @@ class FormPlugin extends Plugin
             }
 
             // Try to find the posted form if available.
-            $form_name = $this->grav['uri']->post('__form-name__', FILTER_SANITIZE_STRING);
-            $unique_id = $this->grav['uri']->post('__unique_form_id__', FILTER_SANITIZE_STRING);
+            $form_name = $this->grav['uri']->post('__form-name__', GRAV_SANITIZE_STRING) ?? '';
+            $unique_id = $this->grav['uri']->post('__unique_form_id__', GRAV_SANITIZE_STRING) ?? '';
 
             if (!$form_name) {
                 $form_name = $page ? $page->slug() : null;
             }
 
-            $form = $this->getFormByName($form_name);
+            $form = $form_name ? $this->getForm($form_name) : null;
+            if ($form && '' === $unique_id) {
+                // Reset form to change the cached unique id and to fire onFormInitialized event.
+                $form->setUniqueId('');
+                $form->reset();
+            }
 
             // last attempt using current page's form
             if (!$form && $page) {
-                $form = $forms->createPageForm($page);
+                $form = $this->createForm($page);
             }
 
             if ($form) {
@@ -1044,21 +1332,17 @@ class FormPlugin extends Plugin
     }
 
     /**
-     * @param PageInterface $page
-     * @param string|int|null $name
-     * @param array $form
-     * @return Form|null
-     * @deprecated
+     * @param  PageInterface  $page
+     * @param  string|null  $name
+     * @param  array|null  $form
+     * @return FormInterface|null
      */
-    protected function createForm(PageInterface $page, $name = null, $form = null)
+    protected function createForm(PageInterface $page, ?string $name = null, ?array $form = null): ?FormInterface
     {
+        /** @var Forms $forms */
+        $forms = $this->grav['forms'];
 
-        $header = $page->header();
-        if (isset($header->form) || isset($header->forms)) {
-            return new Form($page, $name, $form);
-        }
-
-        return null;
+        return $forms->createPageForm($page, $name, $form);
     }
 
     /**
@@ -1066,18 +1350,18 @@ class FormPlugin extends Plugin
      *
      * @return void
      */
-    protected function loadCachedForms()
+    protected function loadCachedForms(): void
     {
         // Get and set the cache of forms if it exists
         try {
-            [$forms] = $this->grav['cache']->fetch($this->getFormCacheId());
-        } catch (Exception $e) {
-            // Couldn't fetch cached forms.
-            $forms = null;
+            /** @var Cache $cache */
+            $cache = $this->grav['cache'];
 
-            /** @var Debugger $debugger */
-            $debugger = Grav::instance()['debugger'];
-            $debugger->addMessage(sprintf('Unserializing cached forms failed: %s', $e->getMessage()), 'error');
+            $forms = $cache->fetch($this->getFormCacheId());
+        } catch (Exception $e) {
+            $this->grav['debugger']->addMessage(sprintf('Unserializing cached forms failed: %s', $e->getMessage()),
+                'error');
+            $forms = null;
         }
 
         if (!is_array($forms)) {
@@ -1085,9 +1369,13 @@ class FormPlugin extends Plugin
         }
 
         // Only update the forms if it's not empty
-        if (!empty($forms)) {
-            $this->forms = array_merge($this->forms, $forms);
-            $this->flattenForms();
+        if ($forms) {
+            $this->forms = Utils::arrayMergeRecursiveUnique($this->forms, $forms);
+            if ($this->config()['debug']) {
+                $this->grav['log']->debug(sprintf("<<<< Loaded cached forms: %s\n%s", $this->getFormCacheId(),
+                    $this->arrayToString($this->forms)));
+            }
+
         }
     }
 
@@ -1096,12 +1384,22 @@ class FormPlugin extends Plugin
      *
      * @return void
      */
-    protected function saveCachedForms()
+    protected function saveCachedForms(): void
     {
-        // Save the current state of the forms to cache
-        if ($this->recache_forms) {
-            $this->recache_forms = false;
-            $this->grav['cache']->save($this->getFormCacheId(), [$this->forms]);
+        /** @var Cache $cache */
+        $cache = $this->grav['cache'];
+        $cache_id = $this->getFormCacheId();
+
+        $forms = $cache->fetch($cache_id);
+        if ($forms) {
+            $this->forms = Utils::arrayMergeRecursiveUnique($this->forms, $forms);
+        }
+
+        $cache->save($cache_id, $this->forms);
+        $this->forms_cache_id = $cache_id;
+        if ($this->config()['debug']) {
+            $this->grav['log']->debug(sprintf(">>>> Saved cached forms: %s\n%s", $this->getFormCacheId(),
+                $this->arrayToString($this->forms)));
         }
     }
 
@@ -1110,30 +1408,151 @@ class FormPlugin extends Plugin
      *
      * @return string
      */
-    protected function getFormCacheId()
+    protected function getFormCacheId(): string
     {
-        return $this->grav['pages']->getPagesCacheId() . '-form-plugin';
+        /** @var \Grav\Common\Cache $cache */
+        $cache = $this->grav['cache'];
+        /** @var Pages $pages */
+        $pages = $this->grav['pages'];
+//        $cache_id = $cache->getKey() . '-form-plugin';
+        $cache_id = $pages->getPagesCacheId().'-form-plugin';
+        return $cache_id;
     }
 
     /**
      * Create unix timestamp for storing the data into the filesystem.
      *
-     * @param string $format
-     * @param bool $raw
+     * @param  string  $format
+     * @param  bool  $raw
      * @return string
      */
     protected function udate($format = 'u', $raw = false)
     {
-
-        $utimestamp = microtime(true);
-
         if ($raw) {
             return date($format);
         }
 
+        $utimestamp = microtime(true);
         $timestamp = floor($utimestamp);
         $milliseconds = round(($utimestamp - $timestamp) * 1000000);
 
         return date(preg_replace('`(?<!\\\\)u`', sprintf('%06d', $milliseconds), $format), $timestamp);
+    }
+
+    protected function processBasicCaptchaImage(Uri $uri): void
+    {
+        if ($uri->path() === '/forms-basic-captcha-image.jpg') {
+            // Get field ID from query parameter
+            $fieldId = $_GET['field'] ?? null;
+            $fieldConfig = null;
+
+            // Retrieve field-specific configuration from session if available
+            if ($fieldId) {
+                $session = $this->grav['session'];
+                $sessionKey = "basic_captcha_config_{$fieldId}";
+                $fieldConfig = $session->{$sessionKey} ?? null;
+            }
+
+            // Create captcha with field-specific or global config
+            $captcha = new BasicCaptcha($fieldConfig);
+            $code = $captcha->getCaptchaCode();
+            $image = $captcha->createCaptchaImage($code);
+            $captcha->renderCaptchaImage($image);
+            exit;
+        }
+    }
+
+    /**
+     * Serve the cap.js-compatible challenge/redeem endpoints used by the
+     * Cap captcha provider. Handled here (before Grav's page pipeline) so
+     * they don't require a dedicated route page.
+     */
+    protected function processCapRoutes(Uri $uri): void
+    {
+        // Cap provider depends on trilbymedia/cap-php which requires PHP 8.1+
+        if (PHP_VERSION_ID < 80100) {
+            return;
+        }
+
+        $path = $uri->path();
+        if ($path !== \Grav\Plugin\Form\Captcha\CapProvider::CHALLENGE_PATH
+            && $path !== \Grav\Plugin\Form\Captcha\CapProvider::REDEEM_PATH) {
+            return;
+        }
+
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            http_response_code(405);
+            header('Allow: POST');
+            exit;
+        }
+
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+
+        try {
+            $cap = \Grav\Plugin\Form\Captcha\CapProvider::getCap();
+
+            if ($path === \Grav\Plugin\Form\Captcha\CapProvider::CHALLENGE_PATH) {
+                echo json_encode($cap->createChallenge(), JSON_UNESCAPED_SLASHES);
+                exit;
+            }
+
+            // Redeem: read JSON body
+            $raw = file_get_contents('php://input') ?: '';
+            $body = json_decode($raw, true);
+            if (!is_array($body) || !isset($body['token'], $body['solutions']) || !is_array($body['solutions'])) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'message' => 'Invalid body']);
+                exit;
+            }
+            $solutions = array_map(static function ($v) { return (int)$v; }, $body['solutions']);
+            echo json_encode($cap->redeemChallenge((string)$body['token'], $solutions), JSON_UNESCAPED_SLASHES);
+            exit;
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('Cap endpoint error: ' . $e->getMessage());
+            http_response_code(500);
+            echo json_encode(['success' => false, 'message' => 'Server error']);
+            exit;
+        }
+    }
+
+    protected function arrayToString($array, $level = 2)
+    {
+        $result = $this->limitArrayLevels($array, $level);
+        return json_encode($result, JSON_UNESCAPED_SLASHES);
+    }
+
+    protected function limitArrayLevels($array, $levelsToKeep, $currentLevel = 0)
+    {
+        if ($currentLevel >= $levelsToKeep) {
+            return '-';
+        }
+
+        $result = [];
+        foreach ($array as $key => $value) {
+            if (is_array($value)) {
+                $value = $this->limitArrayLevels($value, $levelsToKeep, $currentLevel + 1);
+            }
+            $result[$key] = $value;
+        }
+
+        return $result;
+    }
+
+    protected function isFormXhrRequest(): bool
+    {
+        if (!$this->grav['request']) {
+            return false;
+        }
+
+        // Check 1: Our custom header (most reliable for our purpose)
+        $isCustomXhr = $this->grav['request']->getHeaderLine('X-Grav-Form-XHR') === 'true';
+
+        // Check 2: Standard X-Requested-With (often added by libraries)
+        $isStdXhr = $this->grav['request']->getHeaderLine('X-Requested-With') === 'XMLHttpRequest';
+
+        // Require our custom header for the specific partial rendering logic.
+        // You could use || $isStdXhr if you want to be more lenient, but $isCustomXhr is stricter.
+        return $isCustomXhr && $isStdXhr;
     }
 }

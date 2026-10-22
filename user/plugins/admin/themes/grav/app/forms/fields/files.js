@@ -83,6 +83,11 @@ const ACCEPT_FUNC = function(file, done, settings) {
     const hasMax = (resolution.max && (resolution.max.width || resolution.max.height));
     if (hasMin || (!(settings.resizeWidth || settings.resizeHeight) && hasMax)) {
         reader.onload = function(event) {
+            if (!/image\//.test(file.type)) {
+              done();
+              return;
+            }
+
             const image = new Image();
             image.src = event.target.result;
             image.onerror = function() {
@@ -139,6 +144,7 @@ export default class FilesField {
         this.dropzone = new Dropzone(container, this.options);
         this.dropzone.on('complete', this.onDropzoneComplete.bind(this));
         this.dropzone.on('success', this.onDropzoneSuccess.bind(this));
+        this.dropzone.on('addedfile', this.onDropzoneAddedFile.bind(this));
         this.dropzone.on('removedfile', this.onDropzoneRemovedFile.bind(this));
         this.dropzone.on('sending', this.onDropzoneSending.bind(this));
         this.dropzone.on('error', this.onDropzoneError.bind(this));
@@ -149,8 +155,18 @@ export default class FilesField {
             const file = target.parent('.dz-preview').find('.dz-filename');
             const filename = encodeURI(file.text());
 
-            const URL = Object.keys(value).filter((key) => value[key].name === filename).shift();
-            target.attr('href', `${config.base_url_simple}/${URL}`);
+            const key = Object.keys(value).find((key) => {
+                const item = value[key];
+                return item && encodeURI(item.name) === filename;
+            });
+
+            if (!key) {
+                return;
+            }
+
+            const item = value[key];
+            const URL = item.image_url || item.thumb_url || `${config.base_url_simple}/${key}`;
+            target.attr('href', URL);
         });
 
     }
@@ -177,7 +193,6 @@ export default class FilesField {
             dropzone.options.addedfile.call(dropzone, mock);
             if (mock.type.match(/^image\//)) {
                 dropzone.options.thumbnail.call(dropzone, mock, data.path);
-                dropzone.createThumbnailFromUrl(mock, data.path);
             }
 
             file.remove();
@@ -224,7 +239,7 @@ export default class FilesField {
             file,
             data: response,
             mode: 'removeFile',
-            msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_UPLOAD} <strong>${file.name}</strong></p>
+            msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_UPLOAD} <strong>{{fileName}}</strong></p>
             <pre>${response.message}</pre>`
         });
     }
@@ -240,7 +255,7 @@ export default class FilesField {
                 file,
                 data,
                 mode: 'removeFile',
-                msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_ADD} <strong>${file.name}</strong></p>
+                msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_ADD} <strong>{{fileName}}</strong></p>
                 <pre>${data.message}</pre>`
             });
         }
@@ -253,6 +268,10 @@ export default class FilesField {
     b64_to_utf8(str) {
         str = str.replace(/\s/g, '');
         return decodeURIComponent(escape(window.atob(str)));
+    }
+
+    onDropzoneAddedFile(file, ...extra) {
+      return this.dropzone.options.addedfile(file);
     }
 
     onDropzoneRemovedFile(file, ...extra) {
@@ -325,7 +344,9 @@ export default class FilesField {
         }
 
         let modal = $('[data-remodal-id="generic"]');
-        modal.find('.error-content').html(msg);
+        const cleanName = file.name.replace('<', '&lt;').replace('>', '&gt;');
+
+        modal.find('.error-content').html(msg.replace('{{fileName}}', cleanName));
         $.remodal.lookup[modal.data('remodal')].open();
     }
 }
@@ -335,9 +356,15 @@ export function UriToMarkdown(uri) {
     uri = uri.replace(/\(/g, '%28');
     uri = uri.replace(/\)/g, '%29');
 
-    const title = uri.split('.').slice(0, -1).join('.');
+    // Percent-encode spaces so the destination parses (Parsedown rejects raw spaces in URLs);
+    // Grav urldecodes it again when resolving the media. Kept over the `<...>` angle-bracket
+    // form because %20 works on every Grav version, including 1.7.
+    uri = uri.replace(/ /g, '%20');
 
-    return uri.match(/\.(jpe?g|png|gif|svg|mp4|webm|ogv|mov)$/i) ? `![${title}](${uri} "${title}")` : `[${decodeURI(uri)}](${uri})`;
+    // Human-readable label/title: decode so the alt text reads "My image", not "My%20image".
+    const title = decodeURI(uri).split('.').slice(0, -1).join('.').replace(/"/g, '');
+
+    return uri.match(/\.(jpe?g|png|gif|svg|webp|avif|mp4|webm|ogv|mov)$/i) ? `![${title}](${uri} "${title}")` : `[${decodeURI(uri)}](${uri})`;
 }
 
 let instances = [];

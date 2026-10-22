@@ -1,0 +1,651 @@
+<?php
+namespace Grav\Plugin\MigrateGrav;
+
+use RuntimeException;
+
+/**
+ * Stages the Grav 2.0 release alongside the existing site and drops the
+ * standalone wizard at webroot. Performs no Grav-side bootstrap of 2.0;
+ * the wizard runs in a fresh PHP process started by the user.
+ *
+ * The wizard is owned by THIS plugin (wizard/) and copied to
+ * webroot — not extracted from the Grav 2.0 zip. That way we can iterate
+ * on the migration flow without re-releasing Grav.
+ */
+class Kickoff
+{
+    private const MIGRATE_FILE = 'migrate.php';
+    // The wizard body; migrate.php is only a PHP-version gate in front of it.
+    private const WIZARD_FILE = 'migrate-wizard.php';
+    private const FLAG_FILE = '.migrating';
+    private const ZIP_NAME = 'grav-2.0-staged.zip';
+
+    /** @var string */
+    private $webroot;
+    /** @var array */
+    private $config;
+
+    public function __construct(string $webroot, array $config)
+    {
+        $this->webroot = rtrim($webroot, DIRECTORY_SEPARATOR);
+        $this->config = $config;
+    }
+
+    /**
+     * Run the kickoff. Returns metadata describing the resulting state
+     * (token, paths, next-step URL/CLI hint).
+     *
+     * @param array $context Optional triggering context (admin user, source, etc.)
+     */
+    public function run(array $context = []): array
+    {
+        $this->assertWebrootWritable();
+        $this->assertNotAlreadyStaged();
+
+        $zipPath = $this->obtainZip();
+        $this->placeWizard();
+        $this->placeStagedZip($zipPath);
+
+        $token = bin2hex(random_bytes(16));
+        $stageDir = $this->config['stage_dir'] ?: 'grav-2';
+
+        $payload = [
+            'token' => $token,
+            'created' => time(),
+            'step' => 'staged',
+            'source' => [
+                'grav_version' => $context['grav_version'] ?? null,
+                'root' => $this->webroot,
+                'admin_user' => $context['admin_user'] ?? null,
+                'trigger' => $context['trigger'] ?? 'cli',
+            ],
+            'stage_dir' => $stageDir,
+            'staged_zip' => 'tmp/' . self::ZIP_NAME,
+            'wizard_url' => '/' . self::MIGRATE_FILE . '?token=' . $token,
+        ];
+
+        // Forward Grav's system.http.proxy_url / proxy_cert_path into the
+        // flag so the standalone wizard (which runs without Grav loaded)
+        // can apply the same proxy to its own outbound HTTP calls. Empty
+        // values aren't serialized — keeps the flag clean for the common
+        // no-proxy case.
+        $proxyUrl      = (string) ($this->config['proxy_url']       ?? '');
+        $proxyCertPath = (string) ($this->config['proxy_cert_path'] ?? '');
+        if ($proxyUrl !== '') {
+            $payload['proxy'] = ['url' => $proxyUrl];
+            if ($proxyCertPath !== '') {
+                $payload['proxy']['cert_path'] = $proxyCertPath;
+            }
+        }
+
+        $this->writeFlag($payload);
+
+        return $payload;
+    }
+
+    private function assertWebrootWritable(): void
+    {
+        if (!is_dir($this->webroot) || !is_writable($this->webroot)) {
+            throw new RuntimeException("Webroot is not writable: {$this->webroot}");
+        }
+
+        $tmp = $this->webroot . DIRECTORY_SEPARATOR . 'tmp';
+        if (!is_dir($tmp) && !mkdir($tmp, 0775, true) && !is_dir($tmp)) {
+            throw new RuntimeException("Could not create tmp dir: {$tmp}");
+        }
+        if (!is_writable($tmp)) {
+            throw new RuntimeException("tmp/ is not writable: {$tmp}");
+        }
+    }
+
+    private function assertNotAlreadyStaged(): void
+    {
+        $flag = $this->webroot . DIRECTORY_SEPARATOR . self::FLAG_FILE;
+        if (file_exists($flag)) {
+            throw new RuntimeException(
+                "A migration is already staged ({$flag}). " .
+                "Use Restart Wizard or Reset Migration on the Migrate Grav admin page, " .
+                "or visit /" . self::MIGRATE_FILE . " to resume."
+            );
+        }
+
+        $stage = $this->webroot . DIRECTORY_SEPARATOR . ($this->config['stage_dir'] ?: 'grav-2');
+        if (is_dir($stage)) {
+            throw new RuntimeException(
+                "Stage directory already exists: {$stage}. " .
+                "Use Reset Migration on the Migrate Grav admin page to clear it."
+            );
+        }
+    }
+
+    private function obtainZip(): string
+    {
+        $local = trim((string)($this->config['source_local_zip'] ?? ''));
+        if ($local !== '') {
+            if (!is_file($local)) {
+                throw new RuntimeException("source_local_zip not found: {$local}");
+            }
+            $this->assertValidZip($local, false);
+            return $local;
+        }
+
+        $url = (string)($this->config['source_url'] ?? '');
+        if ($url === '') {
+            throw new RuntimeException('No source_url configured for Grav 2.0 release.');
+        }
+
+        // Honor the site's GPM channel: if the user runs on the testing
+        // channel (system.gpm.releases: testing) and the configured source_url
+        // is plain (no query string), append `?testing` so the kickoff pulls
+        // the same release the rest of the admin would advertise as available.
+        // If source_url already carries a query string, the user has been
+        // explicit — leave it alone.
+        $channel = (string)($this->config['gpm_channel'] ?? 'stable');
+        if ($channel === 'testing' && !str_contains($url, '?')) {
+            $url .= '?testing';
+        }
+
+        $dest = $this->webroot . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . self::ZIP_NAME;
+        $this->downloadTo($url, $dest);
+
+        if (!is_file($dest) || filesize($dest) < 1024) {
+            throw new RuntimeException("Downloaded zip looks invalid: {$dest}");
+        }
+        $this->assertValidZip($dest, true);
+
+        return $dest;
+    }
+
+    /**
+     * Whether this host can fetch the Grav 2.0 zip over the network, and via
+     * which mechanism. Shared hosting frequently disables allow_url_fopen; when
+     * the cURL extension is also unavailable the kickoff cannot download at all
+     * and the operator must point source_local_zip at a manually-downloaded zip.
+     * Surfaced on the admin page before staging so the failure is caught up
+     * front rather than mid-kickoff. Static so callers don't need a Kickoff
+     * instance (the admin builds one anyway, but this keeps it cheap).
+     *
+     * @param string $localZip Value of the source_local_zip config (may be empty).
+     * @return array{can_fetch: bool, allow_url_fopen: bool, curl: bool, local_zip: bool, ready: bool}
+     */
+    public static function downloadReadiness(string $localZip = ''): array
+    {
+        $allowUrlFopen = filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN);
+        $curl          = function_exists('curl_init');
+        $canFetch      = $allowUrlFopen || $curl;
+        $hasLocalZip   = trim($localZip) !== '' && is_file(trim($localZip));
+
+        return [
+            'can_fetch'       => $canFetch,
+            'allow_url_fopen' => $allowUrlFopen,
+            'curl'            => $curl,
+            'local_zip'       => $hasLocalZip,
+            // Ready to stage when we can fetch over the wire OR a valid local
+            // zip is already configured to bypass the download entirely.
+            'ready'           => $canFetch || $hasLocalZip,
+        ];
+    }
+
+    private function downloadTo(string $url, string $dest): void
+    {
+        // Shared hosting very commonly disables allow_url_fopen, which makes
+        // fopen() on an http(s) URL fail outright — the historical cause of
+        // the generic "Failed to open source URL" kickoff failure. When the
+        // URL wrapper is unavailable, fall back to cURL (almost always present
+        // even where allow_url_fopen is off). If neither path can fetch over
+        // the network, fail with an actionable message pointing at the
+        // source_local_zip escape hatch.
+        if (!filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
+            if (function_exists('curl_init')) {
+                $this->downloadViaCurl($url, $dest);
+                return;
+            }
+            throw new RuntimeException(
+                "Cannot download {$url}: PHP's allow_url_fopen is disabled and the cURL " .
+                "extension is not available (common on locked-down shared hosting). " .
+                "Download the Grav 2.0 release zip manually and set source_local_zip in the " .
+                "Migrate Grav plugin configuration, then re-run the wizard."
+            );
+        }
+
+        // Build a stream context that honors Grav's proxy config. Without
+        // this, sites behind a corporate proxy can't fetch the Grav 2.0 zip
+        // and the kickoff fails with a generic "Failed to open source URL".
+        $ctx = $this->buildHttpContext();
+        $in = $ctx !== null
+            ? @fopen($url, 'rb', false, $ctx)
+            : @fopen($url, 'rb');
+        if (!$in) {
+            throw new RuntimeException(
+                "Failed to open source URL: {$url}. The host may block outbound HTTPS to " .
+                "getgrav.org, or the connection was refused. Download the release zip manually " .
+                "and set source_local_zip in the Migrate Grav plugin configuration, then re-run."
+            );
+        }
+        $out = @fopen($dest, 'wb');
+        if (!$out) {
+            fclose($in);
+            throw new RuntimeException("Failed to open destination for write: {$dest}");
+        }
+        $ok = false;
+        $written = 0;
+        try {
+            while (!feof($in)) {
+                $chunk = fread($in, 1 << 16);
+                if ($chunk === false) {
+                    throw new RuntimeException("Read error during download from {$url}");
+                }
+                if ($chunk === '') {
+                    continue;
+                }
+                if (fwrite($out, $chunk) !== strlen($chunk)) {
+                    throw new RuntimeException("Write error while saving {$dest} — is the disk full?");
+                }
+                $written += strlen($chunk);
+            }
+
+            // feof() also reports true when the server, a proxy, or a flaky
+            // connection drops mid-transfer, so a clean loop exit does NOT
+            // mean a complete file. Cross-check bytes received against the
+            // response's Content-Length before trusting the download.
+            $meta = stream_get_meta_data($in);
+            if (!empty($meta['timed_out'])) {
+                throw new RuntimeException(
+                    "Download timed out after {$written} bytes from {$url}. Try again, " .
+                    "or download the release manually and set source_local_zip in the plugin configuration."
+                );
+            }
+            $expected = self::contentLengthFromHeaders($meta['wrapper_data'] ?? []);
+            if ($expected !== null && $written !== $expected) {
+                throw new RuntimeException(
+                    "Incomplete download from {$url}: received {$written} of {$expected} bytes. " .
+                    "The connection was interrupted — try again, or download the release manually " .
+                    "and set source_local_zip in the plugin configuration."
+                );
+            }
+            $ok = true;
+        } finally {
+            fclose($in);
+            fclose($out);
+            if (!$ok) {
+                // Never leave a partial file behind: a later retry must not
+                // be able to stage it, and (on failure paths that don't
+                // throw past obtainZip) neither must the wizard.
+                @unlink($dest);
+            }
+        }
+    }
+
+    /**
+     * cURL download path for hosts where allow_url_fopen is disabled. Mirrors
+     * the proxy/cafile handling of buildHttpContext() and streams straight to
+     * disk so a large zip never has to fit in memory. cURL follows redirects
+     * and verifies the byte count via the reported Content-Length, matching the
+     * integrity guarantees of the stream path.
+     */
+    private function downloadViaCurl(string $url, string $dest): void
+    {
+        $out = @fopen($dest, 'wb');
+        if (!$out) {
+            throw new RuntimeException("Failed to open destination for write: {$dest}");
+        }
+
+        $ch = curl_init($url);
+        if ($ch === false) {
+            fclose($out);
+            @unlink($dest);
+            throw new RuntimeException("Could not initialize cURL for download from {$url}");
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_FILE           => $out,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_CONNECTTIMEOUT => 30,
+            CURLOPT_TIMEOUT        => 300, // zip can be large; be generous
+            CURLOPT_FAILONERROR    => true, // turn 4xx/5xx into a cURL error
+            CURLOPT_USERAGENT      => 'grav-migrate-kickoff/1.0',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+
+        // Honor Grav's proxy config (forwarded into $this->config), the same
+        // settings buildHttpContext() applies to the stream path.
+        $proxyUrl = (string) ($this->config['proxy_url'] ?? '');
+        if ($proxyUrl !== '') {
+            curl_setopt($ch, CURLOPT_PROXY, $proxyUrl);
+            $certPath = (string) ($this->config['proxy_cert_path'] ?? '');
+            if ($certPath !== '') {
+                if (is_file($certPath))    curl_setopt($ch, CURLOPT_CAINFO, $certPath);
+                elseif (is_dir($certPath)) curl_setopt($ch, CURLOPT_CAPATH, $certPath);
+            }
+        }
+
+        $ok       = curl_exec($ch);
+        $err      = curl_error($ch);
+        $expected = (int) curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+        curl_close($ch);
+        fclose($out);
+
+        if ($ok === false) {
+            @unlink($dest);
+            throw new RuntimeException(
+                "Download failed from {$url}: {$err}. Try again, or download the release " .
+                "manually and set source_local_zip in the Migrate Grav plugin configuration."
+            );
+        }
+
+        // CURLINFO_CONTENT_LENGTH_DOWNLOAD is -1 when the server sent no
+        // Content-Length (chunked); only cross-check when it's a real size.
+        $written = is_file($dest) ? (int) filesize($dest) : 0;
+        if ($expected > 0 && $written !== $expected) {
+            @unlink($dest);
+            throw new RuntimeException(
+                "Incomplete download from {$url}: received {$written} of {$expected} bytes. " .
+                "The connection was interrupted — try again, or download the release manually " .
+                "and set source_local_zip in the plugin configuration."
+            );
+        }
+    }
+
+    /**
+     * Effective Content-Length from the HTTP wrapper's header list. Across
+     * redirects the wrapper appends every hop's headers to one flat array,
+     * so reset on each new status line and keep the last value seen — that
+     * is the body actually streamed. Returns null when the final response
+     * carried no Content-Length (e.g. chunked encoding); the caller then
+     * relies on the zip integrity check instead.
+     */
+    private static function contentLengthFromHeaders(array $headers): ?int
+    {
+        $length = null;
+        foreach ($headers as $header) {
+            if (!is_string($header)) {
+                continue;
+            }
+            if (preg_match('~^HTTP/~i', $header)) {
+                $length = null;
+            } elseif (preg_match('~^Content-Length:\s*(\d+)\s*$~i', $header, $m)) {
+                $length = (int) $m[1];
+            }
+        }
+        return $length;
+    }
+
+    /**
+     * Reject a zip that isn't a readable archive. The end-of-central-directory
+     * record lives at the TAIL of a zip, so a truncated transfer passes any
+     * size check yet fails to open (libzip: ER_NOZIP 19, ER_INCONS 21, or
+     * ER_TRUNCATED_ZIP 35 on libzip >= 1.10). Catching it here, before the
+     * .migrating flag is written, beats failing later in the wizard's extract
+     * step where the remedy (Reset Migration, re-stage) is less obvious.
+     */
+    private function assertValidZip(string $path, bool $deleteOnFailure): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            return; // no zip extension in this SAPI; the wizard reports it on extract
+        }
+        $zip = new \ZipArchive();
+        $rc = $zip->open($path);
+        if ($rc === true && $zip->numFiles > 0) {
+            $zip->close();
+            return;
+        }
+        if ($rc === true) {
+            $zip->close();
+        }
+        if ($deleteOnFailure) {
+            @unlink($path);
+        }
+        $detail = $rc === true ? 'archive contains no entries' : "ZipArchive error code {$rc}";
+        throw new RuntimeException(
+            "Zip is corrupt or truncated ({$detail}): {$path}. " .
+            ($deleteOnFailure
+                ? 'The download was likely interrupted — try staging again, or download the release manually and set source_local_zip in the plugin configuration.'
+                : 'Re-download the file configured as source_local_zip and verify it with `unzip -t`.')
+        );
+    }
+
+    /**
+     * Build a stream context for the kickoff's outbound zip download,
+     * threading in proxy config from Grav's system.http.proxy_url /
+     * proxy_cert_path (forwarded into $this->config by migrate-grav.php's
+     * newKickoff() / cli/InitCommand.php). Returns null when no proxy is
+     * configured — the caller then falls back to a bare fopen() so the
+     * common case (no proxy) doesn't pay any context-construction cost.
+     *
+     * @return resource|null
+     */
+    private function buildHttpContext()
+    {
+        $proxyUrl = (string) ($this->config['proxy_url'] ?? '');
+        if ($proxyUrl === '') {
+            return null;
+        }
+
+        // PHP's HTTP stream wrapper wants tcp://host:port. Strip any
+        // http:// or https:// scheme the user wrote in system.yaml.
+        $proxyHostPort = preg_replace('~^[a-zA-Z][a-zA-Z0-9+.\-]*://~', '', $proxyUrl);
+        $http = [
+            'timeout'         => 60, // zip can be large; be generous
+            'header'          => "User-Agent: grav-migrate-kickoff/1.0\r\n",
+            'proxy'           => 'tcp://' . $proxyHostPort,
+            'request_fulluri' => true,
+        ];
+        $ssl = ['verify_peer' => true, 'verify_peer_name' => true];
+
+        $certPath = (string) ($this->config['proxy_cert_path'] ?? '');
+        if ($certPath !== '') {
+            if (is_file($certPath))      $ssl['cafile'] = $certPath;
+            elseif (is_dir($certPath))   $ssl['capath'] = $certPath;
+        }
+
+        return stream_context_create(['http' => $http, 'ssl' => $ssl]);
+    }
+
+    /**
+     * Copy the plugin's canonical wizard (wizard/migrate.php plus
+     * wizard/migrate-wizard.php) to webroot.
+     *
+     * The wizard intentionally lives in this plugin rather than in the Grav
+     * 2.0 release zip, so the migration flow can be iterated without Grav
+     * core releases. Each kickoff overwrites any previous wizard copy.
+     */
+    private function placeWizard(): void
+    {
+        foreach ([self::WIZARD_FILE, self::MIGRATE_FILE] as $file) {
+            $src = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'wizard' . DIRECTORY_SEPARATOR . $file;
+            if (!is_file($src)) {
+                throw new RuntimeException("Plugin wizard source missing: {$src}");
+            }
+
+            $dest = $this->webroot . DIRECTORY_SEPARATOR . $file;
+            if (!@copy($src, $dest)) {
+                throw new RuntimeException("Failed to copy wizard to {$dest}");
+            }
+            @chmod($dest, 0644);
+        }
+    }
+
+    private function placeStagedZip(string $zipPath): void
+    {
+        $dest = $this->webroot . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . self::ZIP_NAME;
+        if (realpath($zipPath) === realpath($dest)) {
+            return;
+        }
+        if (!@copy($zipPath, $dest)) {
+            throw new RuntimeException("Failed to copy staged zip to {$dest}");
+        }
+    }
+
+    private function writeFlag(array $payload): void
+    {
+        $flag = $this->webroot . DIRECTORY_SEPARATOR . self::FLAG_FILE;
+        $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($json === false || file_put_contents($flag, $json) === false) {
+            throw new RuntimeException("Failed to write flag file: {$flag}");
+        }
+        @chmod($flag, 0600);
+    }
+
+    /**
+     * Reset migration state. Two modes:
+     *
+     *   'full'    — delete .migrating, migrate.php, the staged zip, the stage
+     *               directory, and restore .htaccess. Next kickoff starts from
+     *               scratch (re-download, re-stage).
+     *
+     *   'restart' — keep .migrating (rewound to step='staged'), keep migrate.php
+     *               and the staged zip, restore .htaccess, drop only the stage
+     *               directory and any transient run state. Lets the user re-run
+     *               the wizard without re-downloading Grav 2.0.
+     *
+     * Safe to call even when nothing is staged.
+     */
+    public function reset(string $mode = 'full'): array
+    {
+        if (!in_array($mode, ['full', 'restart'], true)) {
+            throw new RuntimeException("Unknown reset mode: {$mode}");
+        }
+
+        $removed = [];
+        $errors  = [];
+        $stageDir = trim((string)($this->config['stage_dir'] ?? 'grav-2'), '/');
+
+        // Both modes restore .htaccess and drop the stage directory.
+        $this->restoreHtaccess();
+
+        if ($stageDir !== '') {
+            $stagePath = $this->webroot . DIRECTORY_SEPARATOR . $stageDir;
+            if (is_dir($stagePath)) {
+                if ($this->removeDirectory($stagePath)) {
+                    $removed[] = $stageDir . '/';
+                } else {
+                    $errors[] = "Could not fully remove {$stageDir}/";
+                }
+            }
+        }
+
+        if ($mode === 'restart') {
+            // Rewrite .migrating with only the kickoff-time keys, step rewound
+            // to 'staged'. Strips wizard-side run state (plugins_themes,
+            // accounts, content, _prev_options, staged_zip_version, etc.) so
+            // the wizard restarts cleanly from the staged release.
+            $existing = $this->readFlag();
+            if ($existing !== null) {
+                $minimal = array_filter([
+                    'token'      => $existing['token']      ?? null,
+                    'created'    => $existing['created']    ?? time(),
+                    'step'       => 'staged',
+                    'source'     => $existing['source']     ?? null,
+                    'stage_dir'  => $existing['stage_dir']  ?? ($this->config['stage_dir'] ?: 'grav-2'),
+                    'staged_zip' => $existing['staged_zip'] ?? 'tmp/' . self::ZIP_NAME,
+                    'wizard_url' => $existing['wizard_url'] ?? null,
+                ], static fn($v) => $v !== null);
+                $this->writeFlag($minimal);
+                $removed[] = '.migrating (rewound to staged)';
+            }
+            return ['removed' => $removed, 'errors' => $errors, 'mode' => 'restart'];
+        }
+
+        // mode === 'full'
+        $candidates = [
+            self::FLAG_FILE,
+            self::MIGRATE_FILE,
+            self::WIZARD_FILE,
+            'tmp/' . self::ZIP_NAME,
+        ];
+        foreach ($candidates as $rel) {
+            $path = $this->webroot . DIRECTORY_SEPARATOR . $rel;
+            if (is_file($path)) {
+                if (@unlink($path)) {
+                    $removed[] = $rel;
+                } else {
+                    $errors[] = "Could not remove {$rel}";
+                }
+            }
+        }
+
+        return ['removed' => $removed, 'errors' => $errors, 'mode' => 'full'];
+    }
+
+    /**
+     * Parse the .migrating flag file, or null if none is present/corrupt.
+     */
+    public function readFlag(): ?array
+    {
+        $flag = $this->webroot . DIRECTORY_SEPARATOR . self::FLAG_FILE;
+        if (!is_file($flag)) {
+            return null;
+        }
+        $raw = @file_get_contents($flag);
+        if ($raw === false) {
+            return null;
+        }
+        $data = json_decode($raw, true);
+        return is_array($data) ? $data : null;
+    }
+
+    /**
+     * If the wizard's Test step patched .htaccess (with a backup), restore it.
+     * Idempotent: no-op when no backup exists and no marker is present.
+     */
+    private function restoreHtaccess(): void
+    {
+        $ht = $this->webroot . DIRECTORY_SEPARATOR . '.htaccess';
+        $bk = $ht . '.migrate-grav-backup';
+        if (is_file($bk)) {
+            @copy($bk, $ht);
+            @unlink($bk);
+            return;
+        }
+        if (is_file($ht)) {
+            $cur = (string) @file_get_contents($ht);
+            if (str_contains($cur, '# migrate-grav stage exclusion')) {
+                $stripped = preg_replace(
+                    '/^[ \t]*# migrate-grav stage exclusion.*\n[ \t]*(?:RewriteCond|RewriteBase)[^\n]*\n/m',
+                    '',
+                    $cur
+                );
+                if (is_string($stripped)) @file_put_contents($ht, $stripped);
+            }
+        }
+    }
+
+    /**
+     * Recursively delete a directory tree.
+     *
+     * Symlinks are unlinked, never traversed — critical when the wizard's
+     * staged tree contains symlinked plugin clones (a developer convenience
+     * during iteration). Following the symlinks would attempt to delete real
+     * source files outside the staged tree.
+     */
+    private function removeDirectory(string $path): bool
+    {
+        if (is_link($path)) {
+            return @unlink($path);
+        }
+        if (!is_dir($path)) {
+            return true;
+        }
+        $items = @scandir($path);
+        if ($items === false) {
+            return false;
+        }
+        $ok = true;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $sub = $path . DIRECTORY_SEPARATOR . $item;
+            if (is_link($sub)) {
+                $ok = @unlink($sub) && $ok;
+            } elseif (is_dir($sub)) {
+                $ok = $this->removeDirectory($sub) && $ok;
+            } else {
+                $ok = @unlink($sub) && $ok;
+            }
+        }
+        return @rmdir($path) && $ok;
+    }
+}

@@ -1,0 +1,63 @@
+name: Migrate Grav
+type: plugin
+slug: migrate-grav
+version: 1.0.19
+testing: false
+description: "Stages a new major Grav release alongside an existing site and hands off to a standalone migration wizard."
+icon: rocket
+author:
+  name: Team Grav
+  email: devs@getgrav.org
+  url: https://getgrav.org
+homepage: https://github.com/getgrav/grav-plugin-migrate-grav
+keywords: migrate, upgrade, migration
+bugs: https://github.com/getgrav/grav-plugin-migrate-grav/issues
+docs: https://github.com/getgrav/grav-plugin-migrate-grav/blob/main/README.md
+license: MIT
+dependencies:
+  - { name: grav, version: ">=1.7.49" }
+compatibility:
+  grav: ["1.7", "1.8"]
+
+form:
+  validation: strict
+  fields:
+    enabled:
+      type: toggle
+      label: PLUGIN_ADMIN.PLUGIN_STATUS
+      highlight: 1
+      default: 1
+      options:
+        1: PLUGIN_ADMIN.ENABLED
+        0: PLUGIN_ADMIN.DISABLED
+      validate:
+        type: bool
+
+    source_url:
+      type: text
+      label: 2.0 release URL
+      default: "https://getgrav.org/download/core/grav-update/latest?testing"
+      help: URL of the Grav 2.0 update zip (system files, no baseline user/ content). Avoids polluting the migrated site with default home/typography pages. The wizard fetches admin2, api, and any 2.0-compatible plugin updates from GPM separately. Override only for testing.
+
+    source_local_zip:
+      type: text
+      label: Local 2.0 zip
+      default: ""
+      help: Absolute path to a manually-downloaded Grav 2.0 zip. When set, overrides source_url and skips the download entirely. Use this on hosts that block outbound HTTPS or disable allow_url_fopen and cURL (common on shared hosting), or for local dev testing.
+
+    stage_dir:
+      type: text
+      label: Stage subdirectory
+      default: "grav-2"
+      help: Subdirectory inside the webroot where the new Grav 2.0 install will be staged.
+
+    require_super_admin:
+      type: toggle
+      label: Require super admin to trigger
+      highlight: 1
+      default: 1
+      options:
+        1: PLUGIN_ADMIN.ENABLED
+        0: PLUGIN_ADMIN.DISABLED
+      validate:
+        type: bool

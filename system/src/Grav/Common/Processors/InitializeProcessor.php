@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Processors
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -44,7 +44,7 @@ class InitializeProcessor extends ProcessorBase
     public $title = 'Initialize';
 
     /** @var bool */
-    private static $cli_initialized = false;
+    protected static $cli_initialized = false;
 
     /**
      * @param Grav $grav
@@ -101,7 +101,14 @@ class InitializeProcessor extends ProcessorBase
         // Load pages.
         $this->initializePages($config);
 
-        // Initialize URI.
+        // Load accounts (decides class to be used).
+        // TODO: remove in 2.0.
+        $this->container['accounts'];
+
+        // Initialize session (used by URI, see issue #3269).
+        $this->initializeSession($config);
+
+        // Initialize URI (uses session, see issue #3269).
         $this->initializeUri($config);
 
         // Grav may return redirect response right away.
@@ -114,13 +121,6 @@ class InitializeProcessor extends ProcessorBase
                 return $response;
             }
         }
-
-        // Load accounts (decides class to be used).
-        // TODO: remove in 2.0.
-        $this->container['accounts'];
-
-        // Initialize session.
-        $this->initializeSession($config);
 
         $this->stopTimer('_init');
 
@@ -178,7 +178,7 @@ class InitializeProcessor extends ProcessorBase
         $grav['plugins']->setup();
 
         if (defined('GRAV_SCHEMA') && $config->get('versions') === null) {
-            $filename = GRAV_ROOT . '/user/config/versions.yaml';
+            $filename = USER_DIR . 'config/versions.yaml';
             if (!is_file($filename)) {
                 $versions = [
                     'core' => [
@@ -251,7 +251,8 @@ class InitializeProcessor extends ProcessorBase
             $log->popHandler();
 
             $facility = $config->get('system.log.syslog.facility', 'local6');
-            $logHandler = new SyslogHandler('grav', $facility);
+            $tag = $config->get('system.log.syslog.tag', 'grav');
+            $logHandler = new SyslogHandler($tag, $facility);
             $formatter = new LineFormatter("%channel%.%level_name%: %message% %extra%");
             $logHandler->setFormatter($formatter);
 

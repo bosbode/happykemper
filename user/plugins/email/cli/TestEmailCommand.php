@@ -79,8 +79,6 @@ class TestEmailCommand extends ConsoleCommand
 
         $this->output->writeln('');
 
-        $grav['Email'] = new Email();
-
         $to = $this->input->getOption('to') ?: $grav['config']->get('plugins.email.to');
         $subject = $this->input->getOption('subject');
         $body = $this->input->getOption('body');
@@ -98,8 +96,29 @@ class TestEmailCommand extends ConsoleCommand
 
         if ($sent) {
             $this->output->writeln("<green>Message sent successfully!</green>");
+
+            $id = $grav['Email']->getLastSendId();
+            if ($id !== null) {
+                $this->output->writeln("<white>Provider id:</white> <cyan>{$id}</cyan>");
+            }
         } else {
+            // The provider's own words, not just that it went wrong. A refusal
+            // here is nearly always something only the provider can explain —
+            // an unverified sender, a server still pending approval, a token
+            // for the wrong server — and "Problem sending email..." on its own
+            // leaves nothing to act on and nothing to search for.
             $this->output->writeln("<red>Problem sending email...</red>");
+
+            $why = trim((string)$grav['Email']->getLastSendMessage());
+            if ($why !== '') {
+                $this->output->writeln("<red>{$why}</red>");
+            }
+
+            $debug = trim((string)$grav['Email']->getLastSendDebug());
+            if ($debug !== '') {
+                $this->output->writeln('');
+                $this->output->writeln($debug);
+            }
         }
 
         return 0;

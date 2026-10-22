@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Session
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -11,6 +11,7 @@ namespace Grav\Framework\Session;
 
 use ArrayIterator;
 use Exception;
+use Throwable;
 use Grav\Common\Debugger;
 use Grav\Common\Grav;
 use Grav\Common\User\Interfaces\UserInterface;
@@ -189,7 +190,11 @@ class Session implements SessionInterface
             return $this;
         }
 
-        $sessionName = session_name();
+        $sessionName = $this->getName();
+        if (null === $sessionName) {
+            return $this;
+        }
+
         $sessionExists = isset($_COOKIE[$sessionName]);
 
         // Protection against invalid session cookie names throwing exception: http://php.net/manual/en/function.session-id.php#116836
@@ -250,12 +255,16 @@ class Session implements SessionInterface
         $this->started = true;
         $this->onSessionStart();
 
-        $user = $this->__get('user');
-        if ($user && (!$user instanceof UserInterface || (method_exists($user, 'isValid') && !$user->isValid()))) {
+        try {
+            $user = $this->__get('user');
+            if ($user && (!$user instanceof UserInterface || (method_exists($user, 'isValid') && !$user->isValid()))) {
+                throw new RuntimeException('Bad user');
+            }
+        } catch (Throwable $e) {
             $this->invalidate();
-
             throw new SessionException('Invalid User object, session destroyed.', 500);
         }
+
 
         // Extend the lifetime of the session.
         if ($sessionExists) {
@@ -313,6 +322,8 @@ class Session implements SessionInterface
 
             $this->removeCookie();
 
+            $this->onBeforeSessionStart();
+
             $success = @session_start($this->options);
             if (!$success) {
                 $last = error_get_last();
@@ -338,23 +349,12 @@ class Session implements SessionInterface
     {
         $name = $this->getName();
         if (null !== $name) {
-            $params = session_get_cookie_params();
-
-            $cookie_options = array (
-                'expires'  => time() - 42000,
-                'path'     => $params['path'],
-                'domain'   => $params['domain'],
-                'secure'   => $params['secure'],
-                'httponly' => $params['httponly'],
-                'samesite' => $params['samesite']
-            );
-
             $this->removeCookie();
 
             setcookie(
-                session_name(),
+                $name,
                 '',
-                $cookie_options
+                $this->getCookieOptions(-42000)
             );
         }
 
@@ -403,6 +403,7 @@ class Session implements SessionInterface
     /**
      * @inheritdoc
      */
+    #[\ReturnTypeWillChange]
     public function getIterator()
     {
         return new ArrayIterator($_SESSION);
@@ -419,6 +420,7 @@ class Session implements SessionInterface
     /**
      * @inheritdoc
      */
+    #[\ReturnTypeWillChange]
     public function __isset($name)
     {
         return isset($_SESSION[$name]);
@@ -427,6 +429,7 @@ class Session implements SessionInterface
     /**
      * @inheritdoc
      */
+    #[\ReturnTypeWillChange]
     public function __get($name)
     {
         return $_SESSION[$name] ?? null;
@@ -435,6 +438,7 @@ class Session implements SessionInterface
     /**
      * @inheritdoc
      */
+    #[\ReturnTypeWillChange]
     public function __set($name, $value)
     {
         $_SESSION[$name] = $value;
@@ -443,6 +447,7 @@ class Session implements SessionInterface
     /**
      * @inheritdoc
      */
+    #[\ReturnTypeWillChange]
     public function __unset($name)
     {
         unset($_SESSION[$name]);
@@ -458,8 +463,32 @@ class Session implements SessionInterface
         return \PHP_SAPI !== 'cli' ? \PHP_SESSION_ACTIVE === session_status() : false;
     }
 
+    protected function onBeforeSessionStart(): void
+    {
+    }
+
     protected function onSessionStart(): void
     {
+    }
+
+    /**
+     * Store something in cookie temporarily.
+     *
+     * @param int|null $lifetime
+     * @return array
+     */
+    public function getCookieOptions(int $lifetime = null): array
+    {
+        $params = session_get_cookie_params();
+
+        return [
+            'expires'  => time() + ($lifetime ?? $params['lifetime']),
+            'path'     => $params['path'],
+            'domain'   => $params['domain'],
+            'secure'   => $params['secure'],
+            'httponly' => $params['httponly'],
+            'samesite' => $params['samesite']
+        ];
     }
 
     /**
@@ -467,23 +496,18 @@ class Session implements SessionInterface
      */
     protected function setCookie(): void
     {
-        $params = session_get_cookie_params();
-
-        $cookie_options = array (
-            'expires'  => time() + $params['lifetime'],
-            'path'     => $params['path'],
-            'domain'   => $params['domain'],
-            'secure'   => $params['secure'],
-            'httponly' => $params['httponly'],
-            'samesite' => $params['samesite']
-        );
-
         $this->removeCookie();
 
+        $sessionName = $this->getName();
+        $sessionId = $this->getId();
+        if (null === $sessionName || null === $sessionId) {
+            return;
+        }
+
         setcookie(
-            session_name(),
-            session_id(),
-            $cookie_options
+            $sessionName,
+            $sessionId,
+            $this->getCookieOptions()
         );
     }
 

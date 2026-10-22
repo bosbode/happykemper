@@ -1,10 +1,15 @@
 <?php
 namespace Grav\Plugin;
 
+use Composer\Autoload\ClassLoader;
 use Grav\Common\Data\Data;
+use Grav\Common\Data\ValidationException;
+use Grav\Common\Grav;
 use Grav\Common\Plugin;
+use Grav\Common\Utils;
 use Grav\Plugin\Email\Email;
 use RocketTheme\Toolbox\Event\Event;
+use Symfony\Component\Mailer\Exception\TransportException;
 
 class EmailPlugin extends Plugin
 {
@@ -24,7 +29,26 @@ class EmailPlugin extends Plugin
             'onTwigTemplatePaths'       => ['onTwigTemplatePaths', 0],
             'onSchedulerInitialized'    => ['onSchedulerInitialized', 0],
             'onAdminSave'               => ['onAdminSave', 0],
+            'onApiRegisterRoutes'       => ['onApiRegisterRoutes', 0],
         ];
+    }
+
+    /**
+     * Register API routes for sending emails via the Grav API plugin.
+     */
+    public function onApiRegisterRoutes(Event $event): void
+    {
+        $routes = $event['routes'];
+        $routes->post('/email/send', [\Grav\Plugin\Email\EmailApiController::class, 'send']);
+        $routes->post('/email/test', [\Grav\Plugin\Email\EmailApiController::class, 'test']);
+    }
+
+    /**
+     * @return ClassLoader
+     */
+    public function autoload(): ClassLoader
+    {
+        return require __DIR__ . '/vendor/autoload.php';
     }
 
     /**
@@ -32,11 +56,9 @@ class EmailPlugin extends Plugin
      */
     public function onPluginsInitialized()
     {
-        require_once __DIR__ . '/vendor/autoload.php';
-
         $this->email = new Email();
 
-        if ($this->email->enabled()) {
+        if ($this->email::enabled()) {
             $this->grav['Email'] = $this->email;
         }
     }
@@ -59,8 +81,6 @@ class EmailPlugin extends Plugin
     {
         /** @var Data $obj */
         $obj = $event['object'];
-
-
 
         if ($obj instanceof Data && $obj->blueprints()->getFilename() === 'email/blueprints') {
             $current_pw = $this->grav['config']->get('plugins.email.mailer.smtp.password');
@@ -91,7 +111,8 @@ class EmailPlugin extends Plugin
             case 'email':
                 // Prepare Twig variables
                 $vars = array(
-                    'form' => $form
+                    'form' => $form,
+                    'page' => $this->grav['page']
                 );
 
                 // Copy files now, we need those.
@@ -101,11 +122,11 @@ class EmailPlugin extends Plugin
 
                 $this->grav->fireEvent('onEmailSend', new Event(['params' => &$params, 'vars' => &$vars]));
 
-                if ($this->isAssocArray($params)) {
-                    $this->sendFormEmail($form, $params, $vars);
+                if (Utils::isAssoc($params)) {
+                    $this->sendFormEmail($form, $params, $vars, $event);
                 } else {
                     foreach ($params as $email) {
-                        $this->sendFormEmail($form, $email, $vars);
+                        $this->sendFormEmail($form, $email, $vars, $event);
                     }
                 }
 
@@ -113,29 +134,11 @@ class EmailPlugin extends Plugin
         }
     }
 
-    /**
-     * Add index job to Grav Scheduler
-     * Requires Grav 1.6.0 - Scheduler
-     */
-    public function onSchedulerInitialized(Event $e)
-    {
-        if ($this->config->get('plugins.email.queue.enabled')) {
-
-            /** @var Scheduler $scheduler */
-            $scheduler = $e['scheduler'];
-            $at = $this->config->get('plugins.email.queue.flush_frequency');
-            $logs = 'logs/email-queue.out';
-            $job = $scheduler->addFunction('Grav\Plugin\Email\Email::flushQueue', [], 'email-flushqueue');
-            $job->at($at);
-            $job->output($logs);
-            $job->backlink('/plugins/email');
-        }
-    }
-
-    protected function sendFormEmail($form, $params, $vars)
+    protected function sendFormEmail($form, $params, $vars, $event)
     {
         // Build message
         $message = $this->email->buildMessage($params, $vars);
+        $locator = $this->grav['locator'];
 
         if (isset($params['attachments'])) {
             $filesToAttach = (array)$params['attachments'];
@@ -146,11 +149,13 @@ class EmailPlugin extends Plugin
                     if (isset($fileValues['file'])) {
                         $filename = $fileValues['file'];
                     } else {
-                        $filename = ROOT_DIR . $fileValues['path'];
+                        $filename = $fileValues['path'];
                     }
 
+                    $filename = $locator->findResource($filename, true, true);
+
                     try {
-                        $message->attach(\Swift_Attachment::fromPath($filename));
+                        $message->attachFromPath($filename);
                     } catch (\Exception $e) {
                         // Log any issues
                         $this->grav['log']->error($e->getMessage());
@@ -159,16 +164,106 @@ class EmailPlugin extends Plugin
             }
         }
 
+        //fire event to apply optional signers
+        $this->grav->fireEvent('onEmailMessage', new Event(['message' => $message, 'params' => $params, 'form' => $form]));
+
         // Send e-mail
-        $this->email->send($message);
+
+         $status = $this->email->send($message);
+
+         if ($status < 1) {
+            $this->grav->fireEvent('onFormValidationError', new Event([
+                'form' => $form,
+                'message' => $this->sendFailureMessage($params),
+            ]));
+            $event->stopPropagation();
+            return;
+        }
+
+        //fire event after eMail was sent
+        $this->grav->fireEvent('onEmailSent', new Event(['message' => $message, 'params' => $params, 'form' => $form]));
     }
 
-    protected function isAssocArray(array $arr)
+    /**
+     * What to tell the visitor when a form's email could not be sent.
+     *
+     * The transport's own words used to go straight onto the page. They are
+     * written for whoever configured the mail account, not for whoever filled in
+     * the contact form, and they routinely name the mail server, the login being
+     * used and exactly why it was refused — which is ugly and is more than an
+     * anonymous visitor has any business reading. The detail goes to the Grav
+     * log instead, where the site owner will actually look for it.
+     *
+     * What the visitor gets, in order: an `error_message` on the email action,
+     * then the plugin's own `error_message` setting, then a translated default.
+     * With Grav's debugger switched on the transport's text is appended anyway,
+     * because at that point the person reading the form is the person
+     * configuring it.
+     *
+     * @param  array  $params  the email action's parameters
+     * @return string
+     */
+    protected function sendFailureMessage(array $params): string
     {
-        if (array() === $arr) return false;
-        $keys = array_keys($arr);
-        $index_keys = range(0, count($arr) - 1);
-        return $keys !== $index_keys;
+        $detail = trim((string) $this->email->getLastSendMessage());
+
+        // The site owner's copy, with everything in it.
+        $this->grav['log']->error('plugin-email: could not send the form email: ' . ($detail !== '' ? $detail : 'no reason reported by the transport'));
+
+        $message = $params['error_message'] ?? $this->grav['config']->get('plugins.email.error_message');
+
+        if (!is_string($message) || trim($message) === '') {
+            $message = 'PLUGIN_EMAIL.FORM_SEND_FAILURE';
+        }
+
+        // Run it through the translator either way, so a site may configure a
+        // literal sentence or a language key of its own and both work.
+        $message = $this->grav['language']->translate($message);
+
+        if ($detail !== '' && $this->grav['config']->get('system.debugger.enabled')) {
+            $message .= ' (' . $detail . ')';
+        }
+
+        return $message;
+    }
+
+    /**
+     * Used for dynamic blueprint field
+     *
+     * @return array
+     */
+    public static function getEngines(): array
+    {
+        $engines = (object) [
+            'sendmail' => 'Sendmail',
+            'smtp' => 'SMTP',
+            'smtps' => 'SMTPS',
+            'native' => 'Native',
+            'none' => 'PLUGIN_ADMIN.DISABLED',
+        ];
+        Grav::instance()->fireEvent('onEmailEngines', new Event(['engines' => $engines]));
+        return (array) $engines;
+    }
+
+    /**
+     * The choices for newsletter mail: the site's own engine first, then every
+     * engine except Disabled, because newsletters that cannot be sent are
+     * switched off in the newsletter add-on, not here.
+     */
+    public static function getMarketingEngines(): array
+    {
+        $engines = static::getEngines();
+        unset($engines['none']);
+
+        return ['' => 'PLUGIN_EMAIL.MARKETING_ENGINE_SAME'] + $engines;
+    }
+
+    /**
+     * @deprecated 4.0 Switched from Swiftmailer to Symfony/Mailer - No longer supported
+     */
+    public function onSchedulerInitialized(Event $e)
+    {
+
     }
 
 }

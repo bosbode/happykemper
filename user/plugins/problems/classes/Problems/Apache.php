@@ -4,6 +4,10 @@ namespace Grav\Plugin\Problems;
 
 use Grav\Plugin\Problems\Base\Problem;
 
+/**
+ * Class Apache
+ * @package Grav\Plugin\Problems
+ */
 class Apache extends Problem
 {
     public function __construct()
@@ -16,6 +20,9 @@ class Apache extends Problem
         $this->help = 'https://learn.getgrav.org/basics/requirements#apache-requirements';
     }
 
+    /**
+     * @return $this
+     */
     public function process()
     {
         // Perform some Apache checks
@@ -45,7 +52,7 @@ class Apache extends Problem
 
             $this->details = ['errors' => $apache_errors, 'success' => $apache_success];
         } else {
-            $this->msg = 'Apache not installed, skipping...';
+            $this->msg = 'Apache is not installed or PHP is not installed as Apache module, skipping...';
         }
 
         return $this;

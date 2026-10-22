@@ -1,60 +1,59 @@
-<?php return array (
-  'root' => 
-  array (
-    'pretty_version' => 'dev-develop',
-    'version' => 'dev-develop',
-    'aliases' => 
-    array (
+<?php return array(
+    'root' => array(
+        'name' => 'getgrav/grav-plugin-login',
+        'pretty_version' => 'dev-master',
+        'version' => 'dev-master',
+        'reference' => 'f06cdc61db00772e11ac8059ce5328c3b7868429',
+        'type' => 'library',
+        'install_path' => __DIR__ . '/../../',
+        'aliases' => array(),
+        'dev' => true,
     ),
-    'reference' => '5670bd44d33b738ccf1baaf1615b42f7dbab78cb',
-    'name' => 'getgrav/grav-plugin-login',
-  ),
-  'versions' => 
-  array (
-    'bacon/bacon-qr-code' => 
-    array (
-      'pretty_version' => '1.0.3',
-      'version' => '1.0.3.0',
-      'aliases' => 
-      array (
-      ),
-      'reference' => '5a91b62b9d37cee635bbf8d553f4546057250bee',
+    'versions' => array(
+        'bacon/bacon-qr-code' => array(
+            'pretty_version' => '2.0.8',
+            'version' => '2.0.8.0',
+            'reference' => '8674e51bb65af933a5ffaf1c308a660387c35c22',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../bacon/bacon-qr-code',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'dasprid/enum' => array(
+            'pretty_version' => '1.0.7',
+            'version' => '1.0.7.0',
+            'reference' => 'b5874fa9ed0043116c72162ec7f4fb50e02e7cce',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../dasprid/enum',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'getgrav/grav-plugin-login' => array(
+            'pretty_version' => 'dev-master',
+            'version' => 'dev-master',
+            'reference' => 'f06cdc61db00772e11ac8059ce5328c3b7868429',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../../',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'mober/rememberme' => array(
+            'pretty_version' => '1.0.4',
+            'version' => '1.0.4.0',
+            'reference' => '4e71b0d9c692db28ae78c7eea752c4599b87dc2c',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../mober/rememberme',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'robthree/twofactorauth' => array(
+            'pretty_version' => '1.8.2',
+            'version' => '1.8.2.0',
+            'reference' => '65681de5a324eae05140ac58b08648a60212afc0',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../robthree/twofactorauth',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
     ),
-    'birke/rememberme' => 
-    array (
-      'pretty_version' => '1.0.5',
-      'version' => '1.0.5.0',
-      'aliases' => 
-      array (
-      ),
-      'reference' => '810473852eb4823098e47e23376a19b77ba0c165',
-    ),
-    'getgrav/grav-plugin-login' => 
-    array (
-      'pretty_version' => 'dev-develop',
-      'version' => 'dev-develop',
-      'aliases' => 
-      array (
-      ),
-      'reference' => '5670bd44d33b738ccf1baaf1615b42f7dbab78cb',
-    ),
-    'paragonie/random_compat' => 
-    array (
-      'pretty_version' => 'v1.4.3',
-      'version' => '1.4.3.0',
-      'aliases' => 
-      array (
-      ),
-      'reference' => '9b3899e3c3ddde89016f576edb8c489708ad64cd',
-    ),
-    'robthree/twofactorauth' => 
-    array (
-      'pretty_version' => '1.7.0',
-      'version' => '1.7.0.0',
-      'aliases' => 
-      array (
-      ),
-      'reference' => '37983bf675c5baca09d19d6705170489d0df0002',
-    ),
-  ),
 );

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Console\Gpm
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -112,7 +112,7 @@ class UninstallCommand extends GpmCommand
 
         unset($this->data['not_found'], $this->data['total']);
 
-        // Plugins need to be initialized in order to make clear-cache to work.
+        // Plugins need to be initialized in order to make clearcache to work.
         try {
             $this->initializePlugins();
         } catch (Throwable $e) {

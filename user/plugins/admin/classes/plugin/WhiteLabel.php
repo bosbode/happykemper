@@ -1,6 +1,13 @@
 <?php
 namespace Grav\Plugin\Admin;
 
+/**
+ * @package    Grav\Plugin\Admin
+ *
+ * @copyright  Copyright (c) 2015 - 2024 Trilby Media, LLC. All rights reserved.
+ * @license    MIT License; see LICENSE file for details.
+ */
+
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\Grav;
 use Grav\Framework\File\File;
@@ -16,7 +23,20 @@ class WhiteLabel
     public function __construct()
     {
         $this->grav = Grav::instance();
-        $this->scss = new ScssCompiler();
+        // ScssCompiler is now lazy-loaded to avoid loading scssphp classes until actually needed
+    }
+
+    /**
+     * Get the ScssCompiler instance (lazy-loaded)
+     *
+     * @return ScssCompiler
+     */
+    protected function getScss(): ScssCompiler
+    {
+        if ($this->scss === null) {
+            $this->scss = new ScssCompiler();
+        }
+        return $this->scss;
     }
 
     public function compilePresetScss($config, $options = [
@@ -54,7 +74,7 @@ class WhiteLabel
             }
 
             try {
-                $compiler = $this->scss->reset();
+                $compiler = $this->getScss()->reset();
 
                 $compiler->setVariables($color_scheme['colors'] + $color_scheme['accents']);
                 $compiler->setImportPaths($imports);

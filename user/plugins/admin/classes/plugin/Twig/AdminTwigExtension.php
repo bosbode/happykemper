@@ -1,5 +1,12 @@
 <?php
 
+/**
+ * @package    Grav\Plugin\Admin
+ *
+ * @copyright  Copyright (c) 2015 - 2024 Trilby Media, LLC. All rights reserved.
+ * @license    MIT License; see LICENSE file for details.
+ */
+
 namespace Grav\Plugin\Admin\Twig;
 
 use Grav\Common\Data\Data;
@@ -76,7 +83,7 @@ class AdminTwigExtension extends AbstractExtension
         return clone $obj;
     }
 
-    public function adminRouteFunc(string $route = '', string $languageCode = null)
+    public function adminRouteFunc(string $route = '', ?string $languageCode = null)
     {
         /** @var Admin $admin */
         $admin = Grav::instance()['admin'];

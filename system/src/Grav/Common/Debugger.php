@@ -3,12 +3,14 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common;
 
+use Clockwork\Authentication\AuthenticatorInterface;
+use Clockwork\Authentication\SimpleAuthenticator;
 use Clockwork\Clockwork;
 use Clockwork\DataSource\MonologDataSource;
 use Clockwork\DataSource\PsrMessageDataSource;
@@ -158,6 +160,7 @@ class Debugger
             if ($clockwork) {
                 $log = $this->grav['log'];
                 $clockwork->setStorage(new FileStorage('cache://clockwork'));
+                $clockwork->authenticator($this->debuggerAuthenticator());
                 if (extension_loaded('xdebug')) {
                     $clockwork->addDataSource(new XdebugDataSource());
                 }
@@ -259,13 +262,26 @@ class Debugger
 
         $clockwork->timeline()->finalize($request->getAttribute('request_time'));
 
+        // Credentials are never worth recording. Grav's session cookie value *is*
+        // the PHP session id, so a stored copy is a replayable login for anyone who
+        // can read the profile back, and the same goes for an API token. Replace
+        // them with a marker -- which still shows whether one was sent -- whatever
+        // `censored` is set to.
+        $censored = 'CENSORED';
+        $request = $request
+            ->withCookieParams([$censored => ''])
+            ->withHeader('cookie', $censored);
+
+        foreach (['authorization', 'x-api-token'] as $header) {
+            if ($request->hasHeader($header)) {
+                $request = $request->withHeader($header, $censored);
+            }
+        }
+
         if ($this->censored) {
-            $censored = 'CENSORED';
             $request = $request
-                ->withCookieParams([$censored => ''])
                 ->withUploadedFiles([])
-                ->withHeader('cookie', $censored);
-            $request = $request->withParsedBody([$censored => '']);
+                ->withParsedBody([$censored => '']);
         }
 
         $clockwork->addDataSource(new PsrMessageDataSource($request, $response));
@@ -279,11 +295,7 @@ class Debugger
             ->withHeader('X-Clockwork-Id', $clockworkRequest->id)
             ->withHeader('X-Clockwork-Version', $clockwork::VERSION);
 
-        $grav = Grav::instance();
-        $basePath = $this->grav['base_url_relative'] . $grav['pages']->base();
-        if ($basePath) {
-            $response = $response->withHeader('X-Clockwork-Path', $basePath . '/__clockwork/');
-        }
+        $response = $response->withHeader('X-Clockwork-Path', Utils::url('/__clockwork/'));
 
         return $response->withHeader('Server-Timing', ServerTiming::fromRequest($clockworkRequest)->value());
     }
@@ -299,6 +311,28 @@ class Debugger
         ];
 
         $path = $request->getUri()->getPath();
+
+        // Clockwork's own auth handshake: a client POSTs the password here and
+        // sends the token it gets back as `X-Clockwork-Auth` on later reads.
+        if ($request->getMethod() === 'POST' && str_contains($path, '/__clockwork/auth')) {
+            $token = $clockwork->authenticator()->attempt($this->debuggerCredentials($request));
+
+            return new Response($token ? 200 : 403, $headers, json_encode(['token' => $token]));
+        }
+
+        // This endpoint answers during bootstrap, before plugins, session and
+        // accounts exist, so there is no Grav user to authorize against. Reads are
+        // therefore limited to the machine Grav runs on, unless the operator has
+        // set `system.debugger.token` and the caller presents it.
+        if (!$this->isDebuggerRequestAuthorized($request)) {
+            $response = [
+                'message' => 'Debugger metadata requires authentication.',
+                'requires' => $clockwork->authenticator()->requires()
+            ];
+
+            return new Response(403, $headers, json_encode($response));
+        }
+
         $clockworkDataUri = '#/__clockwork(?:/(?<id>[0-9-]+))?(?:/(?<direction>(?:previous|next)))?(?:/(?<count>\d+))?#';
         if (preg_match($clockworkDataUri, $path, $matches) === false) {
             $response = ['message' => 'Bad Input'];
@@ -307,7 +341,7 @@ class Debugger
         }
 
         $id = $matches['id'] ?? null;
-        $direction = $matches['direction'] ?? null;
+        $direction = $matches['direction'] ?? 'latest';
         $count = $matches['count'] ?? null;
 
         $storage = $clockwork->getStorage();
@@ -316,7 +350,7 @@ class Debugger
             $data = $storage->previous($id, $count);
         } elseif ($direction === 'next') {
             $data = $storage->next($id, $count);
-        } elseif ($id === 'latest') {
+        } elseif ($direction === 'latest' || $id === 'latest') {
             $data = $storage->latest();
         } else {
             $data = $storage->find($id);
@@ -332,11 +366,89 @@ class Debugger
             return new Response(404, $headers, json_encode($response));
         }
 
-        $data = is_array($data) ? array_map(function ($item) {
+        $data = is_array($data) ? array_map(static function ($item) {
             return $item->toArray();
         }, $data) : $data->toArray();
 
         return new Response(200, $headers, json_encode($data));
+    }
+
+    /**
+     * Authenticator guarding the `/__clockwork/` metadata endpoint.
+     *
+     * Clockwork's default is a NullAuthenticator, which waves every caller
+     * through. When no `system.debugger.token` is configured we hand back an
+     * authenticator holding an unguessable one-shot secret instead, so nothing
+     * but a loopback request can read stored profiles.
+     *
+     * @return AuthenticatorInterface
+     */
+    protected function debuggerAuthenticator(): AuthenticatorInterface
+    {
+        $token = (string)$this->config->get('system.debugger.token', '');
+
+        return new SimpleAuthenticator($token !== '' ? $token : bin2hex(random_bytes(32)));
+    }
+
+    /**
+     * Whether the caller may read stored profiler metadata.
+     *
+     * @param RequestInterface $request
+     * @return bool
+     */
+    protected function isDebuggerRequestAuthorized(RequestInterface $request): bool
+    {
+        $token = (string)$this->config->get('system.debugger.token', '');
+        $presented = $request->getHeaderLine('X-Clockwork-Auth');
+
+        if ($token !== '' && $presented !== '') {
+            // Accept the raw token (scripts, same-origin admin clients) as well as
+            // the hashed one Clockwork's extension gets back from /__clockwork/auth.
+            if (hash_equals($token, $presented) || $this->clockwork->authenticator()->check($presented) === true) {
+                return true;
+            }
+        }
+
+        return $this->isLoopbackRequest($request);
+    }
+
+    /**
+     * Credentials posted to `/__clockwork/auth`.
+     *
+     * @param RequestInterface $request
+     * @return array
+     */
+    protected function debuggerCredentials(RequestInterface $request): array
+    {
+        $body = (string)$request->getBody();
+        $data = json_decode($body, true);
+        if (!is_array($data)) {
+            $data = [];
+            parse_str($body, $data);
+        }
+
+        return [
+            'username' => (string)($data['username'] ?? ''),
+            'password' => (string)($data['password'] ?? '')
+        ];
+    }
+
+    /**
+     * Whether the request came from the machine Grav itself runs on.
+     *
+     * Reads REMOTE_ADDR only, on purpose: the `system.http_x_forwarded` headers
+     * are supplied by the client and would let anyone claim to be local.
+     *
+     * @param RequestInterface $request
+     * @return bool
+     */
+    protected function isLoopbackRequest(RequestInterface $request): bool
+    {
+        $remote = $request instanceof ServerRequestInterface
+            ? ($request->getServerParams()['REMOTE_ADDR'] ?? '')
+            : ($_SERVER['REMOTE_ADDR'] ?? '');
+
+        return in_array($remote, ['127.0.0.1', '::1'], true);
     }
 
     /**
@@ -403,8 +515,16 @@ class Debugger
 
             // Clockwork specific assets
             if ($this->clockwork) {
-                $assets->addCss('/system/assets/debugger/clockwork.css', ['loading' => 'inline']);
-                $assets->addJs('/system/assets/debugger/clockwork.js', ['loading' => 'inline']);
+                if ($this->config->get('plugins.clockwork-web.enabled')) {
+                    $route = Utils::url($this->grav['config']->get('plugins.clockwork-web.route'));
+                } else {
+                    $route = 'https://github.com/getgrav/grav-plugin-clockwork-web';
+                }
+                $assets->addCss('/system/assets/debugger/clockwork.css');
+                $assets->addJs('/system/assets/debugger/clockwork.js', [
+                    'id' => 'clockwork-script',
+                    'data-route' => $route
+                ]);
             }
 
 
@@ -856,6 +976,10 @@ class Debugger
             $scope = 'grav';
         } elseif (strpos($errfile, '/twig/') !== false) {
             $scope = 'twig';
+            // TODO: remove when upgrading to Twig 2+
+            if (str_contains($errstr, '#[\ReturnTypeWillChange]') || str_contains($errstr, 'Passing null to parameter')) {
+                return true;
+            }
         } elseif (stripos($errfile, '/yaml/') !== false) {
             $scope = 'yaml';
         } elseif (strpos($errfile, '/vendor/') !== false) {

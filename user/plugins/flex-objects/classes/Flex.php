@@ -65,7 +65,7 @@ class Flex implements FlexInterface
             // Backwards compatibility to v1.0.0-rc.3
             $blueprint = $legacy[$blueprint] ?? $blueprint;
 
-            $type = basename((string)$blueprint, '.yaml');
+            $type = Utils::basename((string)$blueprint, '.yaml');
             if ($type) {
                 $this->managed[] = $type;
             }
@@ -110,7 +110,7 @@ class Flex implements FlexInterface
      * @param bool $keepMissing
      * @return array<FlexDirectoryInterface|null>
      */
-    public function getDirectories(array $types = null, bool $keepMissing = false): array
+    public function getDirectories(?array $types = null, bool $keepMissing = false): array
     {
         return $this->flex->getDirectories($types, $keepMissing);
     }
@@ -147,7 +147,7 @@ class Flex implements FlexInterface
      * @param string|null $keyField
      * @return FlexCollectionInterface|null
      */
-    public function getCollection(string $type, array $keys = null, string $keyField = null): ?FlexCollectionInterface
+    public function getCollection(string $type, ?array $keys = null, ?string $keyField = null): ?FlexCollectionInterface
     {
         return $this->flex->getCollection($type, $keys, $keyField);
     }
@@ -185,7 +185,7 @@ class Flex implements FlexInterface
      * @param string|null $keyField
      * @return FlexObjectInterface|null
      */
-    public function getObject(string $key, string $type = null, string $keyField = null): ?FlexObjectInterface
+    public function getObject(string $key, ?string $type = null, ?string $keyField = null): ?FlexObjectInterface
     {
         return $this->flex->getObject($key, $type, $keyField);
     }
@@ -238,7 +238,7 @@ class Flex implements FlexInterface
         $directories = [];
         $all = Folder::all('blueprints://flex-objects', $params);
         foreach ($all as $url) {
-            $type = basename($url, '.yaml');
+            $type = Utils::basename($url, '.yaml');
             $directory = new FlexDirectory($type, $url);
             if ($directory->getConfig('hidden') !== true) {
                 $directories[$type] = $directory;

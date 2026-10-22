@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Markdown
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -18,6 +18,7 @@ use Grav\Common\Page\Markdown\Excerpts;
  */
 class Parsedown extends \Parsedown
 {
+
     use ParsedownGravTrait;
 
     /**

@@ -1,39 +1,33 @@
 # Grav Email Plugin
 
-The **email plugin** for [Grav](http://github.com/getgrav/grav) adds the ability to send email. This is particularly useful for the **admin** and **login** plugins.
+The **email plugin** for [Grav](http://github.com/getgrav/grav) adds the ability to send email utilizing the `symfony/mailer` package. This is particularly useful for the **admin** and **login** plugins.
+
+> IMPORTANT: **Version 4.0** replaced the old deprecated **SwiftMailer** library with **Symfony/Mailer** package.  This is a modern and well supported library that also has the capability to support 3rd party transport engines such as `SendGrid`, `MailJet`, `MailGun`, `MailChimp`, etc. This library should be backwards compatible with existing configurations, but please create an issue if you run into any problems.
 
 # Installation
 
 The email plugin is easy to install with GPM.
 
-```
+```bash
 $ bin/gpm install email
 ```
 
 # Configuration
 
-By default, the plugin uses PHP Mail as the mail engine.
+The plugin uses `sendmail` binary as the default mail engine.
 
-```
+```yaml
 enabled: true
 from:
-from_name:
 to:
-to_name:
-queue:
-  enabled: true
-  flush_frequency: '* * * * *'
-  flush_msg_limit: 10
-  flush_time_limit: 100
 mailer:
   engine: sendmail
   smtp:
     server: localhost
     port: 25
     encryption: none
-    user: ''
-    password: ''
-    auth_mode: ''
+    user:
+    password:
   sendmail:
     bin: '/usr/sbin/sendmail -bs'
 content_type: text/html
@@ -48,9 +42,53 @@ The first setting you'd likely change is your `Email from` / `Email to` names an
 
 Also, you'd likely want to setup a SMTP server instead of using PHP Mail, as the latter is not 100% reliable and you might experience problems with emails.
 
-Valid values for `auth_mode` include `plain`, `login`, `cram-md5`, or `null`.
+## Built-in Engines
 
-> NOTE: `engine: mail` has been deprecated from the SwiftMail library that this plugin uses as it does not funtion at all.  Please use `smtp` if at all possibe, and `sendmail` if SMTP is not an option.
+By default Email 4.0 supports 4 native engines:
+
+* SMTP - Standard "Simple Mail Transport Protocol" - The default for most providers  
+* SMTPS - "Simple Mail Transport Protocol Secure" - Not very commonly used
+* Sendmail - Uses the built-in `sendmail` binary file available on many Linux and Mac systems
+* Native - Uses `sendmail_path` of `php.ini` for Mac + Linux, and `smtp` and `smtp_port` on Windows
+
+Due to the modular nature of Symfony/Mailer, 3rd party engines are supported via Grav plugins.
+
+## 3rd-Party Engines Plugin Support
+
+Along with the **Email** `v4.0` release, there has also been several custom provider plugins released to provide support for `SMTP`, `API`, and sometimes even `HTTPS` support for 3rd party providers such as **Sendgrid**, **MailJet**, **MailGun**, **Amazon SES**, **Mailchimp/Mandrill**, and others!  `API` or `HTTPS` will provide a faster email sending experience compared to `SMTP` which is an older protocol and requires more back-and-forth negotiation and communication compared to the single-request of `API` or `HTTPS` solutions.
+
+Examples of the currently available plugins include: 
+
+* https://github.com/getgrav/grav-plugin-email-sendgrid - Sengrid Mailer
+* https://github.com/getgrav/grav-plugin-email-amazon - Amazon SES
+* https://github.com/getgrav/grav-plugin-email-mandrill - Mailchimp Mandrill Mailer
+* https://github.com/getgrav/grav-plugin-email-mailersend - Mailersend Mailer
+
+More plugins will be released soon to support `Gmail`, `Mailgun`, `Mailjet`, `OhMySMTP`, `Postmark`, and `SendInBlue`.
+
+## SMTP Configurations for popular solutions:
+
+### Google Email
+
+A popular option for sending email is to simply use your Google Accounts SMTP server.  To set this up you will need to do 2 things first:
+
+As Gmail no longer supports the "allow less secure apps" option, you now need to have 2FA enabled on the account and setup an "App Password" to create a specific password rather than your general account password.  Follow these instructions: [https://support.google.com/accounts/answer/185833](https://support.google.com/accounts/answer/185833).
+
+!! Important: When Google creates an app password for you it will look something like `pxzl vkxd xdap fomb`, you should make sure to remove the spaces when you store your password so it looks like `pxzlvkxdxdapfomb`. Also make sure you are sending from the same email address as the one you are using to authenticate with.
+
+Then configure the Email plugin:
+
+```yaml
+mailer:
+  engine: smtp
+  smtp:
+    server: smtp.gmail.com
+    port: 587
+    user: 'YOUR_GOOGLE_EMAIL_ADDRESS'
+    password: 'YOUR_GOOGLE_PASSWORD'
+```
+
+> NOTE: Check your email sending limits: https://support.google.com/a/answer/166852?hl=en
 
 ### Mailtrap.io
 
@@ -58,7 +96,7 @@ A good way to test emails is to use a SMTP server service that's built for testi
 
 Setup the Email plugin to use that SMTP server with the fake inbox data. For example enter this configuration in `user/config/plugins/email.yaml` or through the Admin panel:
 
-```
+```yaml
 mailer:
   engine: smtp
   smtp:
@@ -73,119 +111,89 @@ That service will intercept emails and show them on their web-based interface in
 
 You can try and fine tune the emails there while testing.
 
-### Google Email
+### Sparkpost
 
-A popular option for sending email is to simply use your Google Accounts SMTP server.  To set this up you will need to do 2 things first:
+Generous email sending limits even in the free tier, and simple setup, make [Sparkpost](https://www.sparkpost.com) a great option for email sending. You just need to create an account, then setup a verified sending domain.  Sparkpost does a nice job of making this process very easy and understandable. Then just click on the SMTP Relay option to get your details for the configuration:
 
-1. Enable IMAP in your Gmail `Settings` -> `Forwarding and POP/IMAP` -> `IMAP Access`
-2. Enable `Less secure apps` in your [user account settings](https://myaccount.google.com/lesssecureapps)
-3. If you have 2-factor authentication, you will need to create a unique application password to use rather than your personal password
-
-Then configure the Email plugin:
-
-```
-mailer:
-  engine: smtp
-  smtp:
-    server: smtp.gmail.com
-    port: 587
-    encryption: tls
-    user: 'YOUR_GOOGLE_EMAIL_ADDRESS'
-    password: 'YOUR_GOOGLE_PASSWORD'
-```
-
-> NOTE: Check your email sending limits: https://support.google.com/a/answer/166852?hl=en
-
-#### Sparkpost
-
-Generous email sending limits even in the free tier, and simple setup, make [Sparkpost](https://www.sparkpost.com) a great option for email sending. You just need to create an account, then setup a verified sending domain.  Sparkpost does a nice job of making this process very easy and undertandable. Then just click on the SMTP Relay option to get your details for the configuration:
-
-```
+```yaml
 mailer:
   engine: smtp
   smtp:
     server: smtp.sparkpostmail.com
     port: 587
-    encryption: tls
     user: 'SMTP_Injection'
     password: 'SEND_EMAIL_API_KEY'
 ```
 
 Then try sending a test email...
 
-#### Sendgrid
+### Sendgrid
 
-[Sendgrid](https://sendgrid.com) offers a very easy-to-setup serivce with 100 emails/day for free.  The next level allows you to send 40k/email a day for just $10/month. Configuration is pretty simple, just create an account, then click SMTP integration and click the button to create an API key.  The configuration is as follows:
+[Sendgrid](https://sendgrid.com) offers a very easy-to-setup service with 100 emails/day for free.  The next level allows you to send 40k/email a day for just $10/month. Configuration is pretty simple, just create an account, then click SMTP integration and click the button to create an API key.  The configuration is as follows:
 
-```
+```yaml
 mailer:
   engine: smtp
   smtp:
     server: smtp.sendgrid.net
     port: 587
-    encryption: tls
     user: 'apikey'
     password: 'YOUR_SENDGRID_API_KEY'
 ```
 
-#### Mailgun
+### Mailgun
 
 [Mailgun is a great service](https://www.mailgun.com/) that offers 10k/emails per month for free.  Setup does require SPIF domain verification so that means you need to add at least a TXT entry in your DNS.  This is pretty standard for SMTP sending services and does provide verification for remote email servers and makes your email sending more reliable.  The Mailgun site, walks you through this process however, and the verification process is simple and fast.
 
-```
+```yaml
 mailer:
   engine: smtp
   smtp:
     server: smtp.mailgun.org
     port: 587
-    encryption: tls
     user: 'MAILGUN_EMAIL_ADDRESS'
     password: 'MAILGUN_EMAIL_PASSWORD'
 ```
 
 Adjust these configurations for your account.
 
-#### MailJet
+### MailJet
 
 Mailjet is another great service that is easy to quickly setup and get started sending email.  The free account gives you 200 emails/day or 600 emails/month.  Just signup and setup your SPF and DKIM entries for your domain.  Then click on the SMTP settings and use those to configure the email plugin:
 
-```
+```yaml
 mailer:
   engine: smtp
   smtp:
     server: in-v3.mailjet.com
     port: 587
-    encryption: tls
     user: 'MAILJUST_USERNAME_API_KEY'
     password: 'MAILJUST_PASSWORD_SECRET_KEY'
 ```
 
-It's that easy!
-
-#### ZOHO
+### ZOHO
 
 ZOHO is a popular solution for hosted email due to it's great 'FREE' tier.  It's paid options are also very reasonable and combined with the latest UI updates and outstanding security features, it's a solid email option.
 
-In order to get ZOHO working with Grav, you need to send email via a user account.  You can either use your users' password or generate an **App Password** via your ZOHO account (clicking on your avatar once logged in), then navigating to `Two Factor Authentication -> App Passwords -> Generate`. Just enter a unique app name (i.e. `Grav Website`).
+In order to get ZOHO working with Grav, you need to send email via a user account.  You can either use your users' password or generate an **App Password** via your ZOHO account (clicking on your avatar once logged in), then navigating to `My Account -> Security -> App Passwords -> Generate`. Just enter a unique app name (i.e. `Grav Website`).
 
 NOTE: The SMTP host required can be found in `Settings -> Mail - > Mail Accounts -> POP/IMAP -> SMTP`.  This will provide the SMTP server for this account (it may not be `imap.zoho.com` depending on what region you are in)
 
-```
+```yaml
 mailer:
   engine: smtp
   smtp:
     server: smtp.zoho.com
     port: 587
-    encryption: tls
     user: 'ZOHO_EMAIL_ADDRESS'
     password: 'ZOHO_EMAIL_PASSWORD'
 ```
 
-#### Sendmail
+### Sendmail
 
 Although not as reliable as SMTP not providing as much debug information, sendmail is a simple option as long as your hosting provider is not blocking the default SMTP port `25`:
 
-```
+```yaml
 mailer:
   engine: sendmail
   sendmail:
@@ -194,7 +202,7 @@ mailer:
 
 Simply adjust your binary command line to suite your environment
 
-### SMTP Email Services
+## SMTP Email Services
 
 Solid SMTP options that even provide a FREE tier for low email volumes include:
 
@@ -206,30 +214,18 @@ Solid SMTP options that even provide a FREE tier for low email volumes include:
 
 If you are still unsure why should be using one in the first place, check out this article: https://zapier.com/learn/email-marketing/best-transactional-email-sending-services/
 
-## Email Queue
-
-For performance reasons, it's often desirable to queue emails and send them in batches, rather than forcing Grav to wait while an email is sent.  This is because email servers are sometimes slow and you might not want to wait for the whole email-sending process before continuing with Grav processing.
-
-To address this, you can enable the **Email Queue** and this will ensure all email's in Grav are actually sent to the queue, and not sent directly.  In order for the emails to be actually sent, you need to flush the queue.  By default this is handled by the **Grav Scheduler**, so you need to ensure you have that enabled and setup correctly or **your emails will not be sent!!!**.
-
-You can also manually flush the queue by using the provided CLI command:
-
-```
-$ bin/plugin email flush-queue
-```
-
 ## Testing with CLI Command
 
 You can test your email configuration with the following CLI Command:
 
-```
-$ bin/plugin email test-email -t steve@apple.com
+```bash
+$ bin/plugin email test-email -t test@email.com
 ```
 
 You can also pass in a configuration environment:
 
-```
-$ bin/plugin email test-email -t steve@apple.com -e mysite.com
+```bash
+$ bin/plugin email test-email -t test@email.com --env=mysite.com
 ```
 
 This will use the email configuration you have located in `user/mysite.com/config/plugins/email.yaml`. Read the docs to find out more about environment-based configuration: https://learn.getgrav.org/advanced/environment-config
@@ -257,7 +253,7 @@ Add this code in your plugins:
 
 When executing email actions during form processing, action parameters are inherited from the global configuration but may also be overridden on a per-action basis.
 
-```
+```yaml
 title: Custom form
 
 form:
@@ -271,11 +267,8 @@ form:
     email:
       subject: "[Custom form] {{ form.value.name|e }}"
       body: "{% include 'forms/data.txt.twig' %}"
-      from: sender@example.com
-      from_name: 'Custom sender name'
-      to: recipient@example.com
-      to_name: 'Custom recipient name'
-      content_type: 'text/plain'
+      from: Custom Sender <sender@example.com>
+      to: Custom Recipient <recipient@example.com>
       process_markdown: true
 ```
 
@@ -283,7 +276,7 @@ form:
 
 You can send multiple emails by creating an array of emails under the `process: email:` option in the form:
 
-```
+```yaml
 title: Custom form
 
 form:
@@ -298,14 +291,14 @@ form:
       -
         subject: "[Custom Email 1] {{ form.value.name|e }}"
         body: "{% include 'forms/data.txt.twig' %}"
-        from: {mail: "owner@mysite.com", name: "Site OWner"}
-        to: {mail: "recepient_1@example.com", name: "Recepient 1"}
+        from: Site Owner <owner@mysite.com>
+        to: Recipient 1 <recepient_1@example.com>
         template: "email/base.html.twig"
       -
         subject: "[Custom Email 2] {{ form.value.name|e }}"
         body: "{% include 'forms/data.txt.twig' %}"
-        from: {mail: "owner@mysite.com", name: "Site OWner"}
-        to: {mail: "recepient_2@example.com", name: "Recepient 1"}
+        from: Site Owner <owner@mysite.com>
+        to: Recipient 2 <recepient_2@example.com>
         template: "email/base.html.twig"
 ```
 
@@ -348,7 +341,7 @@ You can specify a Twig template for HTML rendering, else Grav will use the defau
 You can add file inputs to your form, and send those files via Email.
 Just add an `attachments` field and list the file input fields names. You can have multiple file fields, and this will send all the files as attachments. Example:
 
-```
+```yaml
 form:
   name: custom_form
   fields:
@@ -379,7 +372,47 @@ To have more control over your generated email, you may also use the following a
 * `reply_to`: Set one or more addresses that should be used to reply to the message.
 * `cc` _(Carbon copy)_: Add one or more addresses to the delivery list. Many email clients will mark email in one's inbox differently depending on whether they are in the `To:` or `Cc:` list.
 * `bcc` _(Blind carbon copy)_: Add one or more addresses to the delivery list that should (usually) not be listed in the message data, remaining invisible to other recipients.
-* `charset`: Explicitly set a charset for the generated email body (only takes effect if `body` parameter is a string, defaults to `utf-8`)
+* `tags`: One or more strings the API-based sending services (Postmark, Mailgun, SendGrid, Mailjet and friends) group and report on. Ignored by plain SMTP.
+* `metadata`: A map of name to string value that those same services carry alongside the message and hand back on their webhooks.
+* `headers`: A map of header name to value, written onto the message itself. See below.
+* `error_message`: What to show the visitor if this email cannot be sent. Without it the plugin uses the **Form send failure message** setting, and without that a translated default. The mail server's own explanation of the failure always goes to the Grav log rather than onto the page, and is only added to the visitor's message when Grav's debugger is enabled.
+
+### Custom headers
+
+`headers` puts headers on the message that this plugin has no parameter of its own for. It takes a map of header name to value:
+
+```yaml
+form:
+  name: newsletter
+  process:
+    email:
+      subject: 'This month at Example'
+      body: '{% include "forms/data.html.twig" %}'
+      headers:
+        List-Unsubscribe: '<mailto:leave@example.com>, <https://example.com/newsletter/u/{{ form.value.token }}>'
+        List-Unsubscribe-Post: 'List-Unsubscribe=One-Click'
+        Precedence: 'bulk'
+```
+
+That pair is the reason the parameter exists. Together they are RFC 8058 one-click unsubscribe, which is what puts the unsubscribe button next to your name in Gmail and Outlook, and bulk senders are now expected to have it. Without a button to press, the thing people reach for instead is the spam button, which costs you every other message you send.
+
+A few details worth knowing:
+
+* Values are rendered as Twig with the same variables as every other email parameter, so a per-recipient token can be built inline as above.
+* Setting a header that is already on the message replaces it rather than adding a second one.
+* A value may be a list, which writes the header once per entry. Only headers that are allowed to repeat will take that; `Subject` or `Message-ID` will not.
+* Headers are applied last, after the addresses, the subject, the tags and the metadata, so a header you set by name is the one that goes out.
+* A name that is not a valid header name, or a value the header in question will not take, is skipped and written to `logs/email.log` and to Grav's own log. The rest of the email still goes.
+
+Plugins building a message in PHP can pass the same thing to `buildMessage()`, or hand a list of headers to `applyHeaders()` on a message built with `message()`. A plugin that has to work on older releases too can ask first rather than comparing version numbers:
+
+```php
+$email = $this->grav['Email'];
+
+if (method_exists($email, 'supportsParameter') && $email::supportsParameter('headers')) {
+    $email->applyHeaders($message, ['List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click']);
+}
+```
 
 ### Specifying email addresses
 
@@ -387,64 +420,85 @@ Email-related parameters (`from`, `to`, `reply_to`, `cc`and `bcc`) allow differe
 
 #### Single email address string
 
-```
+```yaml
 to: mail@example.com
+```
+
+#### `name-addr` RFC822 Formatted string
+
+```yaml
+to: Joe Bloggs <maiil@example.com>
 ```
 
 ####  Multiple email address strings
 
-```
+```yaml
 to:
   - mail@example.com
   - mail+1@example.com
   - mail+2@example.com
 ```
 
-#### Single email address with name
+or in `name-addr` format:
 
-```
+```yaml
 to:
-  mail: mail@example.com
-  name: Human-readable name
+  - Joe Bloggs <mail@example.com>
+  - Jane Doe <mail+1@example.com>
+  - Jasper Jesperson <mail+2@example.com>
+```
+
+#### Simple array format with names
+
+```yaml
+to: [mail@example.com, Joe Bloggs]
+```
+
+#### Formatted email address with names
+
+```yaml
+to:
+  email: mail@example.com
+  name: Joe Bloggs
 ```
 
 or inline:
 
-```
-to: {mail: 'mail@example.com', name: 'Human-readable name'}
+```yaml
+to: {email: 'mail@example.com', name: 'Joe Bloggs'}
 ```
 
 #### Multiple email addresses (with and without names)
 
+```yaml
+to:
+  - [mail@example.com, Joe Bloggs]
+  - [mail+2@example.com, Jane Doe]
 ```
+
+```yaml
 to:
   -
-    mail: mail@example.com
-    name: Human-readable name
+    email: mail@example.com
+    name: Joe Bloggs
   -
-    mail: mail+2@example.com
-    name: Another human-readable name
-  -
-    mail+3@example.com
-  -
-    mail+4@example.com
+    email: mail+2@example.com
+    name: Jane Doe
 ```
 
 or inline:
 
-```
+```yaml
 to:
-  - {mail: 'mail@example.com', name: 'Human-readable name'}
-  - {mail: 'mail+2@example.com', name: 'Another human-readable name'}
-  - mail+3@example.com
-  - mail+4@example.com
+  - {email: 'mail@example.com', name: 'Joe Bloggs'}
+  - {email: 'mail+2@example.com', name: 'Jane Doe'}
 ```
 
 ## Multi-part MIME messages
 
-Apart from a simple string, an email body may contain different MIME parts (e.g. HTML body with plain text fallback). You may even specify a different charset for each part (default to `utf-8`):
+Apart from a simple string, an email body may contain different MIME parts (e.g. HTML body with plain text fallback):
 
-```
+```yaml
 body:
   -
     content_type: 'text/html'
@@ -452,8 +506,19 @@ body:
   -
     content_type: 'text/plain'
     body: "{% include 'forms/default/data.txt.twig' %}"
-    charset: 'iso-8859-1'
+
 ```
+
+# Receiving email
+
+The plugin can also read mail sent *to* a site, for plugins that need it (a helpdesk turning replies into ticket updates, for example). It does nothing on its own: another plugin calls it. What it provides, on PHP 8.1 and later:
+
+- `InboundGateway`, the one class a plugin calls to verify and read an inbound webhook request, whichever provider it came from.
+- Two built-in receivers that need no provider account: `cloudflare`, for a free Cloudflare Email Routing Worker, and `generic`, for any script or mail server that can sign and post a raw message. [docs/inbound-cloudflare.md](docs/inbound-cloudflare.md) has the Worker source and a ready-made shell sender.
+- Receivers from provider plugins (Postmark, Mailgun, SendGrid, Amazon SES and others) as those plugins add them.
+- A small IMAP client, for mailboxes with no webhook (Gmail with an app password, most hosting mailboxes). It doesn't need PHP's imap extension.
+
+Plugin authors will find the details in [docs/providers.md](docs/providers.md#receiving-mail).
 
 # Troubleshooting
 
@@ -463,11 +528,17 @@ body:
 
 The first step in determining why emails are not sent is to enable debugging.  This can be done via the `user/config/email.yaml` file or via the plugin settings in the admin.  Just enable this and then try sending an email again.  Then inspect the `logs/email.log` file for potential problems.
 
+#### An email arrives with no recipients, or never arrives at all
+
+An address the plugin cannot parse is dropped, and if every address in a parameter is dropped the message goes out with that header missing entirely. Look in `logs/email.log` or `logs/grav.log` for a line beginning `plugin-email:` that names the parameter and the value it could not read.
+
+Nearly always the value has been HTML-escaped on the way in. `to: "{{ form.value.recipient|e }}"` turns `John Doe <john@example.com>` into `John Doe &lt;john@example.com&gt;`, which is not an email address, and Twig autoescape does the same thing without being asked. Use `|raw` on address parameters.
+
 #### ISP Port 25 blocking
 
-By default, when sending via PHP or Sendmail the machine running the webserver will attempt to send mail using the SMTP protocol.  This uses port `25` which is often blocked by ISPs to protected against spamming.  You can determine if this port is blocked by running this command in your temrinal (mac/linux only):
+By default, when sending via PHP or Sendmail the machine running the webserver will attempt to send mail using the SMTP protocol.  This uses port `25` which is often blocked by ISPs to protected against spamming.  You can determine if this port is blocked by running this command in your terminal (mac/linux only):
 
-```
+```bash
 (echo >/dev/tcp/localhost/25) &>/dev/null && echo "TCP port 25 opened" || echo "TCP port 25 closed"
 ```
 
@@ -478,7 +549,7 @@ If it's blocked there are ways to configure relays to different ports, but the s
 
 If you get an exception when sending email but you cannot see what the error is, you need to enable more verbose exception messages. In the `user/config/system.yaml` file ensure your have the following configuration:
 
-```
+```yaml
 errors:
   display: 1
   log: true
@@ -489,3 +560,46 @@ errors:
 As explained above in the Configuration section, if you're using the default settings, set the Plugin configuration to use a SMTP server. It can be [Gmail](https://www.digitalocean.com/community/tutorials/how-to-use-google-s-smtp-server) or another SMTP server you have at your disposal.
 
 This is the first thing to check. The reason is that PHP Mail, the default system used by the Plugin, is not 100% reliable and emails might not arrive.
+
+## REST API Integration
+
+When the [Grav API plugin](https://github.com/getgrav/grav-plugin-api) is installed and enabled, the email plugin automatically registers two API endpoints:
+
+### POST /api/v1/email/send
+
+Send an ad-hoc email. Requires `api.system.write` permission.
+
+```bash
+curl -X POST "https://yoursite.com/api/v1/email/send" \
+  -H "X-API-Key: grav_your_key" \
+  -H "X-Grav-Environment: localhost" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "recipient@example.com",
+    "subject": "Hello from Grav API",
+    "body": "<h1>Hello</h1><p>Sent via the Grav API.</p>",
+    "content_type": "text/html"
+  }'
+```
+
+**Required fields**: `to`, `subject`, `body`
+
+**Optional fields**: `from` (defaults to plugin config), `cc`, `bcc`, `reply_to`, `content_type` (default: `text/html`)
+
+### POST /api/v1/email/test
+
+Send a test email to verify your email configuration.
+
+```bash
+curl -X POST "https://yoursite.com/api/v1/email/test" \
+  -H "X-API-Key: grav_your_key" \
+  -H "X-Grav-Environment: localhost" \
+  -H "Content-Type: application/json" \
+  -d '{"to": "your@email.com"}'
+```
+
+**Optional fields**: `to` (defaults to plugin's configured recipient)
+
+### API Documentation Pages
+
+Helios-compatible API documentation pages are included in the `api-docs/` directory. Copy them into your Grav Learn site's API reference section to include them in your documentation.

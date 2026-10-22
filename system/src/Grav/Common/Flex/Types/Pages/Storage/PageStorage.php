@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (c) 2015 - 2021 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2025 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -16,13 +16,13 @@ use Grav\Common\Debugger;
 use Grav\Common\Flex\Types\Pages\PageIndex;
 use Grav\Common\Grav;
 use Grav\Common\Language\Language;
+use Grav\Common\Utils;
 use Grav\Framework\Filesystem\Filesystem;
 use Grav\Framework\Flex\Storage\FolderStorage;
 use RocketTheme\Toolbox\File\MarkdownFile;
 use RocketTheme\Toolbox\ResourceLocator\UniformResourceLocator;
 use RuntimeException;
 use SplFileInfo;
-use function assert;
 use function in_array;
 use function is_string;
 
@@ -277,7 +277,7 @@ class PageStorage extends FolderStorage
         } else {
             $params = $template = $language = '';
         }
-        $objectKey = basename($key);
+        $objectKey = Utils::basename($key);
         if (preg_match('|^(\d+)\.(.+)$|', $objectKey, $matches)) {
             [, $order, $folder] = $matches;
         } else {
@@ -373,7 +373,7 @@ class PageStorage extends FolderStorage
 
         try {
             if ($key === '' && empty($row['root'])) {
-                throw new RuntimeException('No storage key given');
+                throw new RuntimeException('Page has no path');
             }
 
             $grav = Grav::instance();
@@ -394,9 +394,17 @@ class PageStorage extends FolderStorage
                 if ($oldFolder !== $newFolder && file_exists($oldFolder)) {
                     $isCopy = $row['__META']['copy'] ?? false;
                     if ($isCopy) {
+                        if (strpos($newFolder, $oldFolder . '/') === 0) {
+                            throw new RuntimeException(sprintf('Page /%s cannot be copied to itself', $oldKey));
+                        }
+
                         $this->copyRow($oldKey, $newKey);
                         $debugger->addMessage("Page copied: {$oldFolder} => {$newFolder}", 'debug');
                     } else {
+                        if (strpos($newFolder, $oldFolder . '/') === 0) {
+                            throw new RuntimeException(sprintf('Page /%s cannot be moved to itself', $oldKey));
+                        }
+
                         $this->renameRow($oldKey, $newKey);
                         $debugger->addMessage("Page moved: {$oldFolder} => {$newFolder}", 'debug');
                     }
@@ -466,17 +474,28 @@ class PageStorage extends FolderStorage
     }
 
     /**
+     * Check if page folder should be deleted.
+     *
+     * Deleting page can be done either by deleting everything or just a single language.
+     * If key contains the language, delete only it, unless it is the last language.
+     *
      * @param string $key
      * @return bool
      */
     protected function canDeleteFolder(string $key): bool
     {
+        // Return true if there's no language in the key.
         $keys = $this->extractKeysFromStorageKey($key);
-        if ($keys['lang']) {
-            return false;
+        if (!$keys['lang']) {
+            return true;
         }
 
-        return true;
+        // Get the main key and reload meta.
+        $key = $this->buildStorageKey($keys);
+        $meta = $this->getObjectMeta($key, true);
+
+        // Return true if there aren't any markdown files left.
+        return empty($meta['markdown'] ?? []);
     }
 
     /**
@@ -534,7 +553,7 @@ class PageStorage extends FolderStorage
             $markdown = [];
             $children = [];
 
-            if (is_string($path) && file_exists($path)) {
+            if (is_string($path) && is_dir($path)) {
                 $modified = filemtime($path);
                 $iterator = new FilesystemIterator($path, $this->flags);
 
@@ -565,7 +584,7 @@ class PageStorage extends FolderStorage
                             $mark = $matches[2] ?? '';
                             $ext = $matches[1] ?? '';
                             $ext .= $this->dataExt;
-                            $markdown[$mark][basename($k, $ext)] = $timestamp;
+                            $markdown[$mark][Utils::basename($k, $ext)] = $timestamp;
                         }
 
                         $modified = max($modified, $timestamp);
@@ -656,7 +675,7 @@ class PageStorage extends FolderStorage
 
                 /** @phpstan-var array{'storage_key': string, 'storage_timestamp': int, 'children': array<string, mixed>} $parent */
                 $parent = &$list[$parentKey];
-                $basename = basename($storage_key);
+                $basename = Utils::basename($storage_key);
 
                 if (isset($parent['children'][$basename])) {
                     $timestamp = $meta['storage_timestamp'];
