@@ -2,7 +2,8 @@
   "name": "happykemper",
   "version": "1.0.0",
   "scripts": {
-    "dev": "gulp"
+    "dev": "gulp",
+    "build": "gulp build"
   },
   "dependencies": {
     "@glidejs/glide": "^3.4.1",
